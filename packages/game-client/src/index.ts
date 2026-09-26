@@ -108,6 +108,10 @@ export { cityScene } from './scenes/city.js';
 export { arenaScene } from './scenes/arena.js';
 export { guildHallScene } from './scenes/guild-hall.js';
 
+/* ── the client that ties them together ── */
+
+export { DEFAULT_STREAM_URL, GameClient, type GameClientOptions } from './client.js';
+
 /* ── sprites ── */
 
 export {

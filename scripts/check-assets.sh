@@ -10,7 +10,7 @@
 #
 # TWO RULES, and the second is the one that matters.
 #
-#   1. Every directory under apps/web/public/assets/ ships a LICENSE.txt. This
+#   1. Every directory under apps/web/public/art/ ships a LICENSE.txt. This
 #      runs on every merge rather than at selection time, so a pack added
 #      without one is caught here rather than at some later audit.
 #   2. The licence RECORDED IN THE SHORTLIST matches the text actually shipped
@@ -32,7 +32,7 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_ROOT
-readonly ASSET_ROOT="${REPO_ROOT}/apps/web/public/assets"
+readonly ASSET_ROOT="${REPO_ROOT}/apps/web/public/art"
 readonly SHORTLIST="${REPO_ROOT}/docs/design/asset-shortlist.md"
 readonly MIN_PACKS=10
 readonly MAX_PACKS=20
@@ -45,7 +45,22 @@ fail() {
 # The licence FAMILY of a shipped licence file.
 #
 # Matched on distinctive PHRASES, not on a licence's abbreviation — and that is a
-# correction, not a style choice. The first version grepped for CC0|MIT|APACHE|
+# correction, not a style choice.
+#
+# THE CC0 PATTERN HAD NO TRAILING `*` FOR THE WHOLE LIFE OF THIS SCRIPT, and it
+# is worth recording what that cost. `*"CC0"` means "starts with CC0", so the
+# branch only ever matched a licence whose text BEGAN with the letters — which
+# none of them do, because they begin with a pack name. The single pack this
+# check had ever seen, tiny-swords-cc0, passed for a different reason: its text
+# contains the phrase "PUBLIC DOMAIN DEDICATION", which the third alternative
+# caught. Every other CC0 pack was REJECTED as "no licence this script
+# recognises" — a false negative that would have had someone delete a pack that
+# is properly licensed, because the gate told them it was not.
+#
+# So the `*` is load-bearing and the URL form is listed too: Kenney's licences
+# say "License: (Creative Commons Zero, CC0)" and carry
+# creativecommons.org/publicdomain/zero/1.0/, and match on neither the old
+# phrase nor a bare abbreviation search that stopped at the first alternative. The first version grepped for CC0|MIT|APACHE|
 # GPL|LGPL|MPL|BSD, and "GNU GENERAL PUBLIC LICENSE v3" contains NO contiguous
 # "GPL": the letters are spread across three words. So replacing a pack's shipped
 # licence with GPL passed the mismatch check, which is the exact failure the rule
@@ -64,7 +79,7 @@ licence_family() {
     *"GNU GENERAL PUBLIC"*) echo "GPL" ;;
     *"MOZILLA PUBLIC LICENSE"*) echo "MPL" ;;
     *"APACHE LICENSE"*) echo "APACHE" ;;
-    *"CC0" | *"CC ZERO" | *"PUBLIC DOMAIN DEDICATION"*) echo "CC0" ;;
+    *"CC0"* | *"CC ZERO"* | *"CREATIVE COMMONS ZERO"* | *"PUBLICDOMAIN/ZERO"*) echo "CC0" ;;
     *"REDISTRIBUTION AND USE IN SOURCE"*) echo "BSD" ;;
     *"PERMISSION IS HEREBY GRANTED, FREE OF CHARGE"*) echo "MIT" ;;
     *"MIT LICENSE"*) echo "MIT" ;;

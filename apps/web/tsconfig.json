@@ -7,6 +7,14 @@
     // app's source lives.
     "noEmit": true,
     "jsx": "preserve",
+    // The DOM library, and it is here because the base config deliberately does
+    // not carry it: a LIBRARY package must not acquire browser globals it never
+    // runs against. This app is not a library — it is a browser application, and
+    // a client component that appends a canvas to a div is the ordinary case for
+    // it. Without this, `HTMLDivElement` resolves (React's types bring it) while
+    // `appendChild` does not, which is a confusing half-error rather than a
+    // clear one.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "allowJs": true,
     "paths": {
       "@/*": ["./src/*"]

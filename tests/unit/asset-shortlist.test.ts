@@ -28,7 +28,7 @@ import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../..');
 const ASSET_ROOT = join(REPO_ROOT, 'apps/web/public/art');
-const SHORTLIST = join(ASSET_ROOT, 'SHORTLIST.md');
+const SHORTLIST = join(REPO_ROOT, 'docs/design/asset-shortlist.md');
 
 /** One row of the shortlist table. */
 interface Row {

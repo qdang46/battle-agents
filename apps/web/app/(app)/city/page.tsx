@@ -26,10 +26,48 @@
  */
 
 import { Application } from 'pixi.js';
-import { GameClient, type WorldViewLike } from '@battle-agents/game-client';
+import {
+  GameClient,
+  PixiWorldView,
+  WorldStore,
+  type EventSourceLike,
+} from '@battle-agents/game-client';
 import { useEffect, useRef, useState } from 'react';
 
 type Status = 'starting' | 'streaming' | 'stopped' | 'failed';
+
+/**
+ * The browser's EventSource, narrowed to what the client asks for.
+ *
+ * The client declares `EventSourceLike` with an `onmessage` that takes
+ * `{ data: string }`, and a browser `EventSource` declares one that takes a
+ * full `MessageEvent`. Assigning one to the other fails, correctly: the
+ * functions are not interchangeable, and pretending they are with a cast would
+ * hide the one place where a frame's shape is decided.
+ *
+ * So the handlers are assigned in the direction that IS assignable — a function
+ * accepting `MessageEvent` satisfies one accepting the narrower parameter, under
+ * `strictFunctionTypes`, because the parameter is a supertype — and the events
+ * are handed on as-is. Nothing is copied and nothing is dropped.
+ */
+function browserEventSource(url: string): EventSourceLike {
+  const source = new EventSource(url);
+  return {
+    set onmessage(handler: EventSourceLike['onmessage']) {
+      source.onmessage = handler === null ? null : (event) => {
+        handler({ data: event.data });
+      };
+    },
+    set onerror(handler: EventSourceLike['onerror']) {
+      source.onerror = handler === null ? null : (event) => {
+        handler(event);
+      };
+    },
+    close() {
+      source.close();
+    },
+  };
+}
 
 export default function CityPage(): React.JSX.Element {
   const host = useRef<HTMLDivElement | null>(null);
@@ -44,8 +82,16 @@ export default function CityPage(): React.JSX.Element {
     }
 
     // A ref, not state: the client is an object with a lifetime, and putting it
-    // in state would re-run this effect every time the count changed.
-    const live: { current?: { app: Application; client: GameClient } } = {};
+    // in state would re-run this effect every time the count changed. Declared
+    // as a nullable field rather than an optional one because
+    // `exactOptionalPropertyTypes` makes `{ a?: T }` and `{ a: T | undefined }`
+    // different types, and this one is genuinely assigned undefined.
+    const live: { current: { app: Application; client: GameClient } | undefined } = { current: undefined };
+    // Anything the async setup allocated and the effect's teardown must release.
+    // Collected rather than returned from the IIFE, because a cleanup returned
+    // from inside an async function is a promise nobody awaits — the first
+    // version returned one and leaked the interval for the life of the page.
+    const clearups: (() => void)[] = [];
 
     let cancelled = false;
     void (async () => {
@@ -67,16 +113,23 @@ export default function CityPage(): React.JSX.Element {
         }
         container.appendChild(app.canvas);
 
+        // The view is built HERE and handed in, not defaulted inside the client.
+        // `WorldViewLike` is the seam the tests use and deliberately carries only
+        // the delta methods; the stage node a host has to add is on the concrete
+        // view, and asking the client for its own view and then reaching past its
+        // interface for `root` is the shape that stops typechecking the moment
+        // the seam is renamed.
+        const view = new PixiWorldView({ store: new WorldStore() });
+        app.stage.addChild(view.root);
+
         // The real stream, and the real browser EventSource. The client refuses
         // to default this so that a missing factory fails at wiring time rather
         // than at connect time — which is exactly what would happen here.
         const client = new GameClient({
-          createSource: (url) => new EventSource(url),
+          view,
+          createSource: browserEventSource,
           url: '/api/events/stream',
         });
-
-        const view = client.view as WorldViewLike;
-        app.stage.addChild(view.root);
         live.current = { app, client };
 
         // A count for the page, read from the view rather than kept alongside
@@ -84,7 +137,7 @@ export default function CityPage(): React.JSX.Element {
         // can disagree with the world.
         const readCount = (): void => {
           setAgents((previous) => {
-            const next = (view as { nodeCount?: number }).nodeCount ?? 0;
+            const next = view.nodeCount;
             return next === previous ? previous : next;
           });
         };
@@ -94,15 +147,11 @@ export default function CityPage(): React.JSX.Element {
         client.start();
         setStatus('streaming');
 
-        // Pixi owns its own ticker; the client's loop is scheduled on rAF and
-        // drives the view. Both run, and the ticker is what presents.
-        app.ticker.add(() => {
-          /* the client's rAF loop mutates the scene; this presents it */
-        });
-
-        return () => {
+        // Pixi owns its own ticker and presents the scene; the client's loop is
+        // scheduled on rAF and mutates it. Nothing to add to the ticker.
+        clearups.push(() => {
           clearInterval(timer);
-        };
+        });
       } catch (thrown) {
         setError(thrown instanceof Error ? thrown.message : String(thrown));
         setStatus('failed');
@@ -111,6 +160,9 @@ export default function CityPage(): React.JSX.Element {
 
     return () => {
       cancelled = true;
+      for (const cleanup of clearups.splice(0)) {
+        cleanup();
+      }
       const current = live.current;
       if (current !== undefined) {
         current.client.destroy();
