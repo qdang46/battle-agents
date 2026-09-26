@@ -77,6 +77,9 @@ importers:
       '@battle-agents/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@battle-agents/game-client':
+        specifier: workspace:*
+        version: link:../../packages/game-client
       '@battle-agents/github':
         specifier: workspace:*
         version: link:../../packages/infrastructure/github
@@ -104,6 +107,9 @@ importers:
       next:
         specifier: ^15.5.4
         version: 15.5.26(@types/node@24.13.6)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      pixi.js:
+        specifier: ^8.21.0
+        version: 8.21.0
       react:
         specifier: ^19.2.0
         version: 19.3.0

@@ -253,30 +253,52 @@ export class DrizzleBattleRepository implements BattleStore {
       return { joined: false, why: 'already-in-it', battle };
     }
 
-    // `FOR UPDATE` on the battle row is the mutex, and it is the only thing here
-    // that is. Two concurrent joins both evaluating
-    // `count(*) < capacity` without it would both see one participant and both
-    // insert, and a three-way "battle" is a battle the judge cannot score. The
-    // second transaction blocks on the row lock until the first commits, and then
-    // its count sees the first's participant. `ON CONFLICT DO NOTHING` is the
-    // second half: the primary key on (battle_id, session_id) refuses a duplicate
-    // join whatever the count said.
+    // WHY THIS IS A TRANSACTION AND NOT ONE STATEMENT, because the comment that
+    // used to be here claimed otherwise and was wrong in a way that only showed
+    // up under load.
     //
-    // Raw SQL rather than the query builder, because an INSERT cannot carry a
-    // WHERE clause in drizzle — the capacity test has to live in the statement
-    // for the reason above, not in a read that preceded it.
-    const inserted = await this.#database.execute<{ session_id: string }>(sql`
-      WITH locked AS (
-        SELECT id, status FROM battles WHERE id = ${battleId} FOR UPDATE
-      )
-      INSERT INTO battle_participants (battle_id, session_id, joined_at)
-      SELECT locked.id, ${sessionId}, ${new Date(now)}
-      FROM locked
-      WHERE locked.status = 'running'
-        AND (SELECT count(*)::int FROM battle_participants p WHERE p.battle_id = locked.id) < ${capacity}
-      ON CONFLICT DO NOTHING
-      RETURNING session_id
-    `);
+    // It said `FOR UPDATE` on the battle row was the mutex, that the second
+    // transaction "blocks on the row lock until the first commits, and then its
+    // count sees the first's participant". It blocks. Its count does not see it.
+    //
+    // Under READ COMMITTED a statement's snapshot is taken when the statement
+    // STARTS. The second join starts, blocks inside the CTE on the row lock, and
+    // by the time the first commits the second statement's snapshot is already
+    // fixed — so `count(*)` still reads 1, `1 < 2` is true, and it inserts. Three
+    // participants in a two-seat battle, which is the outcome the comment names
+    // as the thing the mutex prevents. Measured: 28-38 oversells in 40 races,
+    // against a test that passed 15 times out of 15 in isolation and failed once
+    // under a full-suite run. `ON CONFLICT DO NOTHING` is no help — the conflict
+    // target is (battle_id, session_id) and the two racers are DIFFERENT
+    // sessions, so there is no conflict to do nothing about.
+    //
+    // So the mutex is taken in its OWN statement and the count is read in a
+    // LATER one, which is the only ordering under which a fresh snapshot is even
+    // possible. `pg_advisory_xact_lock` rather than the row lock because it is
+    // keyed on the battle rather than on a row that does not exist yet — the row
+    // to lock for "the second seat" is the seat, and there is no such row. It is
+    // transaction-scoped, so the enclosing transaction holds it, and no advisory
+    // lock is ever left behind by a crash.
+    //
+    // The capacity test still lives in the INSERT rather than in a read before
+    // it, which is the part of the original design that was right: the decision
+    // and the write are one statement, so nothing can invalidate the decision
+    // between them. What changed is only WHICH snapshot the decision reads.
+    const inserted = await this.#database.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${battleId}, 0))`);
+      return tx.execute<{ session_id: string }>(sql`
+        WITH locked AS (
+          SELECT id, status FROM battles WHERE id = ${battleId}
+        )
+        INSERT INTO battle_participants (battle_id, session_id, joined_at)
+        SELECT locked.id, ${sessionId}, ${new Date(now)}
+        FROM locked
+        WHERE locked.status = 'running'
+          AND (SELECT count(*)::int FROM battle_participants p WHERE p.battle_id = locked.id) < ${capacity}
+        ON CONFLICT DO NOTHING
+        RETURNING session_id
+      `);
+    });
 
     if (inserted.rows.length === 0) {
       // Somebody else took the last place, or the battle stopped running between

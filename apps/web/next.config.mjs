@@ -14,6 +14,11 @@ const nextConfig = {
     // protocol, and a package that is transpiled through one of its consumers
     // still has to be listed if the bundler sees it directly.
     '@battle-agents/protocol',
+    // The city page mounts PixiJS and the game client as source, for the same
+    // reason the rest are here: so a change to the client is visible from a dev
+    // reload rather than after a workspace rebuild.
+    '@battle-agents/game-client',
+    'pixi.js',
   ],
   // One webpack change, and it is the only one that was needed.
   //
