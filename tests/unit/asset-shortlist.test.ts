@@ -54,15 +54,19 @@ function rows(): readonly Row[] {
       .split('|')
       .slice(1, -1)
       .map((cell) => cell.trim());
-    // A data row is five cells, the second of which is a number.
+    // Five columns: pack, source, licence, style, role. The separator row has
+    // dashes in the first cell and is skipped by shape rather than by position,
+    // so a table that grew or lost a column parses to nothing instead of
+    // parsing to the wrong thing.
     if (cells.length !== 5) continue;
-    if (!/^\d+$/.test(cells[0] ?? '')) continue;
+    if ((cells[0] ?? '').startsWith('-')) continue;
+    // The header row is a real five-cell row, so shape alone does not exclude it.
+    if ((cells[0] ?? '').toLowerCase() === 'pack') continue;
     parsed.push({
-      // cells[0] is the row number, already matched above.
-      pack: cells[1] ?? '',
-      source: cells[2] ?? '',
-      license: cells[3] ?? '',
-      style: cells[4] ?? '',
+      pack: cells[0] ?? '',
+      source: cells[1] ?? '',
+      license: cells[2] ?? '',
+      style: cells[3] ?? '',
     });
   }
   return parsed;
