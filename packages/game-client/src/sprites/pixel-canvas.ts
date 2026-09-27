@@ -19,7 +19,7 @@
  * placeholders use; everything else is a reason to reach for the renderer.
  */
 
-import { Texture, TextureSource } from 'pixi.js';
+import { BufferImageSource, Texture } from 'pixi.js';
 
 export interface Rgba {
   readonly r: number;
@@ -124,13 +124,40 @@ export class PixelCanvas {
     }
   }
 
-  /** Wraps the buffer as a Pixi texture. The only Pixi call in this file. */
+  /**
+   * Wraps the buffer as a Pixi texture. The only Pixi call in this file.
+   *
+   * `BufferImageSource`, and that is not a stylistic choice between two
+   * constructors that both return a texture. It is the one that works.
+   *
+   * A plain `TextureSource` has no `uploadMethodId`, so the renderer's bind
+   * group has no idea how to put a raw typed array on the GPU: the texture is
+   * created, it reports the right width and height, it reports a valid
+   * resource, and it uploads nothing. Every sprite built this way was a
+   * transparent rectangle that rendered as nothing.
+   *
+   * Measured in a running browser rather than inferred: `renderer.extract` on
+   * the unit layer returned 48x48 bounds with 0 opaque pixels and a single
+   * colour (black) — the sprite was in the tree, correctly parented, correctly
+   * positioned and correctly scaled, and contributed no pixels at all. The
+   * bounds were right, which is why every earlier check of the node, the
+   * texture's dimensions and the sprite's alpha all passed.
+   *
+   * `format` is stated rather than inferred, because `BufferImageSource` picks
+   * `bgra8unorm` for a `Uint8ClampedArray` that does not name one — blue and
+   * red swapped, which is a sprite that renders in the wrong colours rather than
+   * one that fails loudly.
+   */
   toTexture(): Texture {
-    const source = new TextureSource({
+    const source = new BufferImageSource({
       resource: this.#pixels,
       width: this.width,
       height: this.height,
       format: 'rgba8unorm',
+      // The buffer is written as straight (non-premultiplied) alpha and Pixi
+      // uploads it as such, so the two must agree or a translucent zone marker
+      // comes out with the wrong opacity.
+      alphaMode: 'premultiply-alpha-on-upload',
     });
     return new Texture({ source });
   }

@@ -7,6 +7,7 @@ import {
   SpriteCache,
   TILE_SOURCE_PX,
   TILE_WORLD_PX,
+  spriteCache,
   spriteKey,
 } from './sprite-factory.js';
 
@@ -91,5 +92,35 @@ describe('SpriteCache is a cache', () => {
     const texture = cache.get(spriteKey('agent', 0));
     expect(texture.width).toBe(PLACEHOLDER_TILE_PX);
     expect(texture.height).toBe(PLACEHOLDER_TILE_PX);
+  });
+});
+
+describe('the texture a sprite is built from', () => {
+  it('is a BUFFER source, because a plain TextureSource uploads nothing', () => {
+    // The property that was wrong, and every other property was right: the
+    // texture reported a valid 16x16 size, a valid resource, and rendered as a
+    // transparent rectangle. `renderer.extract` on the unit layer returned 48x48
+    // bounds with ZERO opaque pixels and one colour (black) while the sprite was
+    // in the tree, correctly parented, correctly positioned and correctly
+    // scaled.
+    //
+    // A plain `TextureSource` has no `uploadMethodId`, so the renderer's bind
+    // group has no way to put a raw typed array on the GPU. `BufferImageSource`
+    // is the subclass that carries `uploadMethodId: 'buffer'` and this is the
+    // only assertion here that would have caught it -- the size, the parent,
+    // the alpha and the position were all correct and all invisible to it.
+    const texture = spriteCache().get(spriteKey('agent', 1));
+    const source = texture.source as unknown as { uploadMethodId?: string };
+
+    expect(source.uploadMethodId).toBe('buffer');
+  });
+
+  it('states rgba8unorm rather than letting it be inferred as bgra', () => {
+    // `BufferImageSource` infers `bgra8unorm` for a Uint8ClampedArray that
+    // does not name a format, which is a sprite that renders in the wrong
+    // colours rather than one that fails loudly.
+    const texture = spriteCache().get(spriteKey('agent', 1));
+
+    expect(texture.source.format).toBe('rgba8unorm');
   });
 });
