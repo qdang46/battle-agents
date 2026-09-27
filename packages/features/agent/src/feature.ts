@@ -167,6 +167,8 @@ export function agentFeature(dependencies: {
     persistedEvents: [
       AGENT_REGISTERED,
       AGENT_REGISTRATION_REJECTED,
+      SESSION_EVENTS.started,
+      SESSION_EVENTS.resumed,
       SESSION_EVENTS.recovered,
     ],
     capabilities: [
@@ -274,6 +276,35 @@ function sessionActions(sessionRepository: SessionRepository) {
         // would control, and this row decides whether a session is inside its
         // resume grace window.
         const result = await hello(sessionRepository, { ...input, now: context.now() });
+
+        // THE PRODUCER THIS EVENT HAD BEEN MISSING.
+        //
+        // `session.started` is in the protocol's `PUBLISHED_WHOLE` set, the
+        // public stream carries it whole, and the game client's store reduces it
+        // into a character standing in the city. Nothing emitted it: the action
+        // returned the handshake's result and stopped, so a session began, a row
+        // was written, and the world never heard about it. `/city` read "every
+        // character here arrived as an event" and could never show one.
+        //
+        // Found by running the game, not by reading it: the stream answered
+        // `full_state` with `liveSessionIds: []` and then nothing, forever, and
+        // a live session created through the real handshake changed nothing.
+        //
+        // A RESUME emits `session.resumed` rather than a second `started`,
+        // because the character did not start again — it is the same run picked
+        // back up, and a spectator counting characters should not see one
+        // arrive twice for one session.
+        await context.runtime.emit({
+          type: result.resumed ? SESSION_EVENTS.resumed : SESSION_EVENTS.started,
+          occurredAt: context.now(),
+          actorId: result.agentId,
+          payload: {
+            sessionId: result.sessionId,
+            agentId: result.agentId,
+            harness: input.harness,
+            ...(result.projectId === null ? {} : { projectId: result.projectId }),
+          },
+        });
         return result;
       },
     }),

@@ -26,48 +26,12 @@
  */
 
 import { Application } from 'pixi.js';
-import {
-  GameClient,
-  PixiWorldView,
-  WorldStore,
-  type EventSourceLike,
-} from '@battle-agents/game-client';
+import { GameClient, PixiWorldView, WorldStore } from '@battle-agents/game-client';
 import { useEffect, useRef, useState } from 'react';
 
-type Status = 'starting' | 'streaming' | 'stopped' | 'failed';
+import { browserEventSource } from '@/ui/browser-event-source.js';
 
-/**
- * The browser's EventSource, narrowed to what the client asks for.
- *
- * The client declares `EventSourceLike` with an `onmessage` that takes
- * `{ data: string }`, and a browser `EventSource` declares one that takes a
- * full `MessageEvent`. Assigning one to the other fails, correctly: the
- * functions are not interchangeable, and pretending they are with a cast would
- * hide the one place where a frame's shape is decided.
- *
- * So the handlers are assigned in the direction that IS assignable — a function
- * accepting `MessageEvent` satisfies one accepting the narrower parameter, under
- * `strictFunctionTypes`, because the parameter is a supertype — and the events
- * are handed on as-is. Nothing is copied and nothing is dropped.
- */
-function browserEventSource(url: string): EventSourceLike {
-  const source = new EventSource(url);
-  return {
-    set onmessage(handler: EventSourceLike['onmessage']) {
-      source.onmessage = handler === null ? null : (event) => {
-        handler({ data: event.data });
-      };
-    },
-    set onerror(handler: EventSourceLike['onerror']) {
-      source.onerror = handler === null ? null : (event) => {
-        handler(event);
-      };
-    },
-    close() {
-      source.close();
-    },
-  };
-}
+type Status = 'starting' | 'streaming' | 'stopped' | 'failed';
 
 export default function CityPage(): React.JSX.Element {
   const host = useRef<HTMLDivElement | null>(null);
@@ -119,13 +83,20 @@ export default function CityPage(): React.JSX.Element {
         // view, and asking the client for its own view and then reaching past its
         // interface for `root` is the shape that stops typechecking the moment
         // the seam is renamed.
-        const view = new PixiWorldView({ store: new WorldStore() });
+        // ONE store, handed to both the view and the client. Passing a view
+        // built on a different store is the silent failure this pair exists to
+        // prevent: the client writes deltas into its own store, the view looks
+        // agents up in the one it was built on, and the city renders an empty
+        // world while reporting `streaming` and a clean console.
+        const store = new WorldStore();
+        const view = new PixiWorldView({ store });
         app.stage.addChild(view.root);
 
         // The real stream, and the real browser EventSource. The client refuses
         // to default this so that a missing factory fails at wiring time rather
         // than at connect time — which is exactly what would happen here.
         const client = new GameClient({
+          store,
           view,
           createSource: browserEventSource,
           url: '/api/events/stream',

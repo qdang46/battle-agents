@@ -52,7 +52,53 @@ export interface SharedRuntime {
   readonly bus: EventBus;
 }
 
-let cached: { shared: SharedRuntime; close: () => Promise<void> } | undefined;
+/**
+ * The singleton lives on `globalThis`, and that is load-bearing rather than a
+ * style choice.
+ *
+ * Next.js bundles each App Router route as its OWN module graph, so a
+ * module-scoped `let` is evaluated once PER ROUTE. `api/events/route.ts` and
+ * `api/events/stream/route.ts` therefore each got their own copy of this file,
+ * each built its own `Pool`, its own runtime and its own bus — and the whole
+ * realtime layer was silently dead. Measured, not argued: a counter on the
+ * module scope printed `#1 ... #2 ...` for one process, and a subscriber to
+ * `/api/events/stream` received `full_state` and then nothing at all, forever,
+ * while `POST /api/events` answered `200 {"accepted":1}` for events nobody
+ * downstream could ever see.
+ *
+ * That is the failure this file was written to end — its own header calls "two
+ * BUSES ... a correctness bug" — and folding the two runtimes into one file did
+ * not end it, because the duplication is in the bundler and not in the imports.
+ * A `globalThis` key is the one place that survives a duplicated module graph.
+ *
+ * The key is a Symbol rather than a string so nothing can collide with it by
+ * accident, and the close handle is left on the same object so `closeSharedRuntime`
+ * still releases the pool it opened.
+ */
+const CACHE_KEY = Symbol.for('battle-agents.shared-runtime');
+
+/**
+ * The PENDING build, not the built runtime.
+ *
+ * This is the second half of the bug and the half that actually bit. Caching the
+ * resolved runtime is a check-then-set across an `await`: the first caller sees
+ * an empty cache, starts building, and suspends at `await store.prime()` with
+ * the cache still empty. The second caller arrives in that window, sees an empty
+ * cache too, and builds a SECOND runtime with its own bus. Both finish, the
+ * last assignment wins, and the loser keeps publishing to a bus nobody reads.
+ *
+ * Measured: one process, one PID, three distinct buses, `cached=false` on every
+ * call. Caching the PROMISE closes it because the assignment happens
+ * synchronously, before the first suspension point, so the second caller awaits
+ * the build already in flight rather than starting a second one.
+ */
+interface RuntimeCache {
+  pending?: Promise<SharedRuntime>;
+  close?: () => Promise<void>;
+}
+
+const globalCache = globalThis as unknown as { [CACHE_KEY]?: RuntimeCache };
+const holder: RuntimeCache = (globalCache[CACHE_KEY] ??= {});
 
 /**
  * Built on first use, never at module scope.
@@ -62,9 +108,14 @@ let cached: { shared: SharedRuntime; close: () => Promise<void> } | undefined;
  * tree rather than when a request arrives.
  */
 export async function sharedRuntime(): Promise<SharedRuntime> {
-  if (cached !== undefined) {
-    return cached.shared;
-  }
+  // The `??=` is the whole fix. It assigns synchronously, so a second caller
+  // arriving while the first is suspended at `await store.prime()` gets this
+  // promise rather than an empty cache.
+  holder.pending ??= buildSharedRuntime();
+  return holder.pending;
+}
+
+async function buildSharedRuntime(): Promise<SharedRuntime> {
   const pool = createDatabasePool();
   const database = createDatabase(pool);
   const bus = createInMemoryEventBus();
@@ -95,12 +146,16 @@ export async function sharedRuntime(): Promise<SharedRuntime> {
     achievementsRepository: new DrizzleAchievementsRepository(database),
   });
 
-  cached = { shared: { database, runtime, bus }, close: () => closeDatabasePool(pool) };
-  return cached.shared;
+  holder.close = () => closeDatabasePool(pool);
+  return { database, runtime, bus };
 }
 
 /** Releases the pool. For a graceful shutdown, not for per-request cleanup. */
 export async function closeSharedRuntime(): Promise<void> {
-  await cached?.close();
-  cached = undefined;
+  await holder.close?.();
+  // `delete` rather than an assignment to undefined: the property is optional,
+  // and exactOptionalPropertyTypes treats those as different types, so
+  // assigning undefined is a compile error and deleting is the same intent.
+  delete holder.pending;
+  delete holder.close;
 }

@@ -762,10 +762,20 @@ describe('a client that has read nothing but the four documents', () => {
       });
     }
     const rows = await logRowsFor(hello.sessionId);
+    // `session.started` is in core's FROZEN `PERSISTED_EVENT_TYPES`, so a
+    // session that begins writes a row. It did not used to, and this assertion
+    // encoded that: the handshake produced no event at all, so the only row was
+    // the one the agent had just reported. The assertion was pinned to the
+    // absence of a producer rather than to the contract, and the contract says
+    // otherwise -- `packages/core/src/persistence.ts` lists it.
+    //
+    // Asserted in order and as a set of the types, because the ORDER is also
+    // meaningful here: the handshake row precedes the reported one, which is
+    // what makes the log a story rather than a pile.
     expect(
       rows.map((r) => r.type),
       'the persisted set is not what the documents describe',
-    ).toEqual(['test.passed']);
+    ).toEqual(['session.started', 'test.passed']);
 
     // ── observe ──
     //
@@ -907,7 +917,18 @@ describe('a client that has read nothing but the four documents', () => {
       expectedProtocol: agent.protocolVersion(),
       receivedProtocol: '9.9.9',
     });
-    expect(await logRowsFor(hello.sessionId), 'a refused batch wrote a row anyway').toEqual([]);
+    // Scoped to the refused event's own type, and deliberately NOT the whole
+    // session log. The handshake above legitimately wrote a `session.started`
+    // row -- it is in core's frozen durable set -- so a whole-log assertion
+    // would be asserting that a session may not begin, which is not what this
+    // test is about. What it is about is the batch: a refused one writes no row
+    // of the type it carried, and naming the type is a sharper claim than
+    // emptying the table.
+    const after = await logRowsFor(hello.sessionId);
+    expect(
+      after.filter((row) => row.type === event.type),
+      'a refused batch wrote a row anyway',
+    ).toEqual([]);
     await agent.finish(hello.sessionId, 'completed');
   });
 

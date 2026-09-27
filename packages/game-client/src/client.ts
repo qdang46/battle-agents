@@ -43,19 +43,44 @@ export interface GameClientOptions {
    * exist outside a browser, and the failure would surface at connect time
    * rather than at wiring time.
    */
+  /**
+   * The store the supplied `view` reads, when a view is supplied.
+   *
+   * Optional because a host that lets the client build the view needs no say.
+   * Required in practice whenever a view IS supplied, and passing a view over a
+   * different store is the silent-empty-world failure this comment exists to
+   * name.
+   */
+  readonly store?: WorldStore;
   readonly createSource?: EventSourceFactory;
   readonly reconnectDelayMs?: number;
   readonly schedule?: (callback: () => void) => void;
 }
 
 export class GameClient implements FrameRenderer {
-  readonly store = new WorldStore();
+  /**
+   * The store. Host-supplied or built here, and ALWAYS the one `view` reads.
+   *
+   * This used to be `readonly store = new WorldStore()` — a field initialiser,
+   * so a fresh store every time, whatever the host passed. A host that built its
+   * own `PixiWorldView` over its own `WorldStore` and handed it in therefore got
+   * a client writing deltas into a store the view never reads, and the view
+   * looking every agent up in one that never receives any. The world was empty
+   * and the status was `streaming`, with nothing red anywhere.
+   *
+   * The two are now one object by construction rather than by a comment. A host
+   * that supplies a view supplies the store it was built on, and the alternative
+   * — building the view from `client.store` after construction — is impossible
+   * here because the view has to exist before the client that renders it.
+   */
+  readonly store: WorldStore;
   readonly view: WorldViewLike;
   readonly #loop: FrameLoop;
   readonly #unsubscribe: () => void;
   #stream: StreamClient | undefined;
 
   constructor(options: GameClientOptions = {}) {
+    this.store = options.store ?? new WorldStore();
     this.view =
       options.view ??
       new PixiWorldView({ store: this.store, cache: options.cache ?? spriteCache() });

@@ -94,13 +94,40 @@ const DEFAULT_RECONNECT_DELAY_MS = 1000;
  * exists to prevent.
  */
 export function decodeFrame(message: string): StreamFrame | undefined {
-  for (const line of message.split('\n')) {
-    if (!line.startsWith('data: ')) continue;
+  // Two shapes reach here, and only one of them was ever handled.
+  //
+  // `EventSourceLike.onmessage` is declared as taking `{ data: string }` — the
+  // browser's shape — and a browser's `MessageEvent.data` is the PAYLOAD ONLY:
+  // the `event:` line and the `data: ` prefix have already been stripped by the
+  // time the handler runs. The first version of this function scanned for a
+  // `data: ` prefix, so in a real browser it found none, returned undefined, and
+  // the client tore the connection down and resynced — on every frame, for ever.
+  //
+  // Its own tests never saw it, because the fake source hands over the RAW WIRE
+  // TEXT (`event: kind\ndata: {...}\n\n`) rather than what a browser produces.
+  // A fake that does not behave like the thing it stands in for is how a
+  // transport bug survives a green suite.
+  //
+  // So both are accepted: a raw SSE frame for a host that reads the stream
+  // itself, and a bare payload for a browser. Neither is guessed at — a string
+  // that parses as one of the two frame kinds is a frame, and anything else is
+  // still undefined.
+  const dataLines = message
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line) => line.slice('data: '.length));
+
+  const candidates = dataLines.length > 0 ? dataLines : [message];
+
+  for (const candidate of candidates) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(line.slice('data: '.length));
+      parsed = JSON.parse(candidate);
     } catch {
-      return undefined;
+      // A malformed frame among several is skipped rather than fatal, because
+      // an SSE stream can carry a keep-alive comment or a partial line beside a
+      // real frame and the real one is still worth delivering.
+      continue;
     }
     if (typeof parsed !== 'object' || parsed === null) return undefined;
     const kind = (parsed as { kind?: unknown }).kind;
