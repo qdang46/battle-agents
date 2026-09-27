@@ -32,6 +32,7 @@
     "typecheck": "tsc -b tsconfig.build.json && tsc -p tsconfig.json",
     "check:docs": "bash scripts/check-docs.sh",
     "check:pooled-driver": "bash scripts/check-pooled-driver.sh",
+    "check:adapter-boundary": "bash scripts/check-adapter-boundary.sh",
     "check:watchlist": "bash scripts/check-watchlist-claims.sh",
     "check:assets": "bash scripts/check-assets.sh"
   },

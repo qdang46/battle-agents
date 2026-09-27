@@ -7,6 +7,7 @@ import type { AgentWatcher } from '@battle-agents/core';
 import { AgentEventSchema } from '@battle-agents/protocol';
 
 import * as aiderModule from '../../packages/adapters/aider/src/index.js';
+import * as ampModule from '../../packages/adapters/amp/src/index.js';
 import * as claudeModule from '../../packages/adapters/claude/src/index.js';
 import * as codexModule from '../../packages/adapters/codex/src/index.js';
 import * as cursorModule from '../../packages/adapters/cursor/src/index.js';
@@ -51,7 +52,17 @@ import * as piModule from '../../packages/adapters/pi/src/index.js';
 const repoRoot = resolve(import.meta.dirname, '../..');
 const adaptersDir = join(repoRoot, 'packages/adapters');
 
-const ADAPTERS = ['aider', 'claude', 'codex', 'cursor', 'gemini', 'goose', 'opencode', 'pi'] as const;
+const ADAPTERS = [
+  'aider',
+  'amp',
+  'claude',
+  'codex',
+  'cursor',
+  'gemini',
+  'goose',
+  'opencode',
+  'pi',
+] as const;
 
 /**
  * Each watcher, as a value of the type it must be assignable to.
@@ -67,6 +78,7 @@ const WATCHER_TYPES: Readonly<
   Record<(typeof ADAPTERS)[number], abstract new (...args: never[]) => AgentWatcher>
 > = {
   aider: aiderModule.AiderWatcher,
+  amp: ampModule.AmpWatcher,
   claude: claudeModule.ClaudeWatcher,
   codex: codexModule.CodexWatcher,
   cursor: cursorModule.CursorWatcher,
@@ -110,6 +122,37 @@ describe('every adapter satisfies the shared contract', () => {
     }
   });
 
+  it('covers every adapter on disk, so adding one cannot skip the contract', () => {
+    // The other direction, and it was the one that was missing.
+    //
+    // The list above is hand-written because vitest cannot resolve a computed
+    // dynamic import — the comment in the barrel test records that failing at
+    // runtime — so a hand-written list has a failure mode a glob does not: a
+    // new adapter that is simply not in it. That is not a red suite, it is a
+    // SILENT one. `amp` was added to this repository and this suite reported
+    // 6/6 green while holding it to nothing at all: no shape check, no
+    // vocabulary check, no tool-map check.
+    //
+    // The template's README does tell a contributor to add themselves by hand,
+    // which is the right advice and the wrong safety net — a README is read
+    // sometimes. This is what makes the omission impossible rather than
+    // discouraged, and it costs one readdirSync.
+    const onDisk = readdirSync(adaptersDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      // `_template` is the thing copied FROM, not a harness. It has a watcher
+      // class and would otherwise be held to a contract it only models.
+      .filter((name) => name !== '_template')
+      .filter((name) => existsSync(join(adaptersDir, name, 'src', 'index.ts')))
+      .sort();
+
+    expect(
+      [...ADAPTERS].sort(),
+      'an adapter exists on disk but is not in ADAPTERS, so nothing in this suite is ' +
+        'checking it. Add the import and the WATCHER_TYPES entry.',
+    ).toEqual(onDisk);
+  });
+
   it('exports a watcher that satisfies AgentWatcher', () => {
     // Static imports, not a computed one. Vitest cannot resolve
     // `import(\`../../packages/adapters/${name}/src/index.js\`)` — it fails at
@@ -118,6 +161,7 @@ describe('every adapter satisfies the shared contract', () => {
     // under contract is also visible in the file rather than hidden in a glob.
     const barrels: Readonly<Record<string, unknown>> = {
       aider: aiderModule,
+      amp: ampModule,
       claude: claudeModule,
       codex: codexModule,
       cursor: cursorModule,
