@@ -1,3 +1,4 @@
+import { toResponseBody } from '@/http-body.js';
 import { sharedMcpGateway } from '@/mcp-gateway.js';
 import type { HttpRequest, HttpResponse } from '@/routes.js';
 
@@ -47,9 +48,18 @@ async function respond(request: Request): Promise<Response> {
   // has no `body` field. Derived from the constructor rather than naming
   // `BodyInit`, which is not a global in this project (no DOM lib, and
   // @types/node does not export it globally).
-  return new Response(response.body as ConstructorParameters<typeof Response>[0], {
+  // `toResponseBody` owns the decision and the reason, and lives in src/ so a
+  // test can reach it: this file is under app/api/, which no test glob covers,
+  // and two wrong serialisations shipped from exactly here.
+  const serialised = toResponseBody(response.body);
+  const headers: Record<string, string> = { ...(response.headers ?? {}) };
+  if (serialised.needsJsonContentType && headers['content-type'] === undefined) {
+    headers['content-type'] = 'application/json';
+  }
+
+  return new Response(serialised.body as ConstructorParameters<typeof Response>[0], {
     status: response.status,
-    ...(response.headers === undefined ? {} : { headers: response.headers }),
+    headers,
   });
 }
 
