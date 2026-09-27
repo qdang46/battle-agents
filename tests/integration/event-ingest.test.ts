@@ -326,3 +326,65 @@ describe('the persistence split, over a real database', () => {
     subscriber.close();
   });
 });
+
+describe('the version pin, over HTTP-shaped requests', () => {
+  // The refusal is implemented at apps/web/src/event-routes.ts and nothing
+  // exercised it: every other test in this file sends the correct version, so
+  // the branch was green while untested. That is the bead's exact complaint --
+  // "without it, 'protocol-compatible' is a wish" -- and it is the mechanical
+  // half of "forks are welcome IF protocol-compatible".
+  //
+  // The assertion is on the BODY, not only the status, for the reason the 413
+  // test gives: a hosting platform answers 400 for its own reasons and the two
+  // are not the same finding. A refusal that names the expected version is a
+  // client that can fix itself; a bare 400 is a debugging session.
+
+  it('refuses a client presenting a different version, and names the expected one', async () => {
+    const response = await post({ protocolVersion: '9.9.9', events: [keyEvent()] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      error: 'protocol version mismatch',
+      expectedProtocol: PROTOCOL_VERSION,
+      receivedProtocol: '9.9.9',
+    });
+  });
+
+  it('refuses a malformed version rather than letting it past the pin', async () => {
+    // The parser compares by EXACT string and never reaches the zod schema, so
+    // 'not-a-version' is reported as a mismatch too. An earlier version of this
+    // test asserted the opposite — that it would be a different failure — on
+    // the assumption that protocolVersionSchema caught it first. It does not,
+    // and the single comparison is the better design: every input that is not
+    // the version this build speaks is refused the same way, so there is no
+    // input shape that slips past.
+    const response = await post({ protocolVersion: 'not-a-version', events: [keyEvent()] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      error: 'protocol version mismatch',
+      expectedProtocol: PROTOCOL_VERSION,
+      receivedProtocol: 'not-a-version',
+    });
+  });
+
+  it('refuses a batch with no version at all, which is the shape a stranger sends', async () => {
+    // The other end of the same property. `received` is stringified rather than
+    // left undefined, so the response still names what arrived.
+    const response = await post({ events: [keyEvent()] });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ error: 'protocol version mismatch' });
+    expect(await countRows()).toBe(0);
+  });
+
+  it('accepts the version this build speaks, so the pin is not a wall', async () => {
+    // The other half, and the one that stops the pin from being tightened into
+    // something that refuses everything. A check that only ever saw refusals
+    // would pass on a route that admitted nobody.
+    const response = await post(batch([keyEvent()]));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ accepted: 1 });
+  });
+});
