@@ -289,8 +289,20 @@ describe('the Next.js adapter passes the body through unserialised', () => {
     expect(ROUTE_CODE).not.toContain('JSON.stringify(response.body)');
   });
 
-  it('hands the body to Response directly, so a ReadableStream survives', () => {
-    expect(ROUTE_CODE).toContain('response.body as ConstructorParameters<typeof Response>[0]');
+  it('routes the body through toResponseBody, which is where the stream rule lives', () => {
+    // This used to assert that the route contained the literal
+    // `response.body as ConstructorParameters<typeof Response>[0]`, which
+    // PINNED THE BUG: passing the body straight to `new Response` is what made
+    // every non-stream response the eight characters `[object Object]`. The
+    // test's intent -- a ReadableStream must survive -- was right and its
+    // mechanism was wrong, because asserting an implementation string cannot
+    // see that the implementation is broken.
+    //
+    // The property is now a behaviour, asserted in http-body.test.ts: a stream
+    // passes through, an object is serialised, and a content-type is owed only
+    // when something was. This case now checks only that the route delegates
+    // there, which is the part this file can see.
+    expect(ROUTE_CODE).toContain('toResponseBody(response.body)');
   });
 
   it('exports the three verbs the transport needs', () => {
