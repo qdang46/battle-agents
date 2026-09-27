@@ -17,3 +17,5 @@ export type {
   SearchQuery,
   SearchResult,
 } from './api.js';
+export { HANDLER_FAILED, isolateHandlers } from './handler-isolation.js';
+export type { HandlerFailure, HandlerFailureReporter } from './handler-isolation.js';

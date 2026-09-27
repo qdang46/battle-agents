@@ -8,7 +8,9 @@ import { reputationFeature } from '@battle-agents/reputation';
 import { socialFeature } from '@battle-agents/social';
 import { worldFeature } from '@battle-agents/world';
 import { createRuntime } from '@battle-agents/core';
-import type { EventBus, Logger, Runtime, StateStore } from '@battle-agents/core';
+import type { EventBus, GameEvent, Logger, Runtime, StateStore } from '@battle-agents/core';
+import { HANDLER_FAILED, isolateHandlers } from '@battle-agents/api';
+import type { HandlerFailure } from '@battle-agents/api';
 
 import {
   closeDatabasePool,
@@ -129,6 +131,50 @@ export interface GameRuntimeDependencies {
 }
 
 export function createGameRuntime(dependencies: GameRuntimeDependencies): Runtime {
+  /**
+   * What a handler that threw costs the host: a log line and a durable row.
+   *
+   * ## Why this is here rather than in core
+   *
+   * `packages/core/src/runtime.ts` awaits handlers in order and does not catch,
+   * so one handler that throws unwinds the loop, every consumer registered after
+   * it never runs, and the bus never sees the event at all. AGENTS.md freezes
+   * core outright, so the boundary is applied here, at the composition root —
+   * the one layer allowed to see both the extensions and the runtime, and the
+   * only place a boundary can be fitted without fabricating the `RuntimeContext`
+   * a handler is called with.
+   *
+   * ## Why it logs AND persists
+   *
+   * The runtime's own comment explains why catching in core was rejected: a
+   * feature quietly missing state is worse than a loud failure, and only the
+   * caller can still act on it. This is that loudness. The failure is written
+   * through `store.append` rather than through `emit`, deliberately: `emit` runs
+   * the feature's handlers again, so a feature that throws on one event would
+   * throw on its own failure report — a loop that cannot terminate — and
+   * `emit` persists only types some feature declared.
+   *
+   * The store write is fire-and-forget and its rejection is dropped, for the
+   * reason `isolateHandlers` gives: a reporter that throws at the moment of
+   * failure reintroduces the starvation the boundary was added to remove. A log
+   * line is still written first, so a store that is down does not take the one
+   * signal with it.
+   */
+  const recordFailure = (failure: HandlerFailure): void => {
+    const message = failure.cause instanceof Error ? failure.cause.message : String(failure.cause);
+    dependencies.log?.warn(
+      `[composition] handler of ${failure.featureId} threw on ${failure.eventType}: ${message}`,
+    );
+    const fault: GameEvent = {
+      type: HANDLER_FAILED,
+      occurredAt: new Date().toISOString(),
+      actorId: 'system',
+      payload: { featureId: failure.featureId, eventType: failure.eventType, message },
+    };
+    void dependencies.store.append(fault).catch(() => undefined);
+    dependencies.bus.publish(fault);
+  };
+
   return createRuntime({
     // One feature per line, each line the whole call. scripts/removal-test.sh
     // deletes a feature by stripping the line that constructs it, so folding
@@ -175,7 +221,7 @@ export function createGameRuntime(dependencies: GameRuntimeDependencies): Runtim
       // that constructs it. `levelOf` and `gate` are hoisted above for exactly
       // that reason, and for the one above theirs.
       worldFeature({ repository: dependencies.worldStore, levelOf: async (id: string) => (await dependencies.progressionRepository.find(id))?.level ?? 1, gate: (level: number, required: number): boolean => level >= required }),
-    ],
+    ].map((feature) => isolateHandlers(feature, recordFailure)),
     store: dependencies.store,
     bus: dependencies.bus,
     ...(dependencies.log === undefined ? {} : { log: dependencies.log }),
