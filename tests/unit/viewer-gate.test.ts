@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { gateFor } from '../../apps/web/src/ui/viewer-gate.js';
-import { resolveViewer, SIGN_IN_PATH, viewerMayRead } from '../../apps/web/src/viewer-view.js';
-import type { Viewer } from '../../apps/web/src/viewer-view.js';
+import { resolveViewer, viewerMayRead } from '../../apps/web/src/viewer-view.js';
 
 /**
  * The three answers a visitor can get, and that they stay three.
@@ -19,6 +17,14 @@ import type { Viewer } from '../../apps/web/src/viewer-view.js';
  * There was no test for any of it. `resolveViewer` and `gateFor` had zero
  * coverage, so the module's own stated reason for existing was a comment.
  *
+ * WHAT LIVES HERE AND WHAT DOES NOT. Only the `.ts` half. `gateFor` returns
+ * React elements from a `.tsx` file, and the ROOT tsconfig deliberately has no
+ * `jsx` setting, so a test under `tests/unit/` cannot import one -- the first
+ * version of this file did, and `tsc` refused it with "'--jsx' is not set".
+ * That is the shape working: every other root test imports `.ts` from apps/web
+ * and never a component. The rendering half is `apps/web/src/ui/viewer-gate.test.ts`,
+ * which runs in the same unit stage and is typechecked by the app's own config.
+ *
  * ## What the sharp edge actually is
  *
  * `readAuthEnvironment` THROWS when a variable is missing, and the module calls
@@ -33,41 +39,6 @@ import type { Viewer } from '../../apps/web/src/viewer-view.js';
  * is not a shortcut here; it is the scenario.
  */
 
-/**
- * Every string reachable in a returned element tree, including attributes.
- *
- * Not `renderToStaticMarkup`, and the reason is worth recording: `react` is a
- * dependency of `apps/web`, not of the workspace root, and the unit stage runs
- * from the root. A test that imports react to render a gate is a test that
- * cannot be written where it is needed — and the existing suites do not render
- * components for exactly that reason. Reading the element the function already
- * built needs nothing but the object it returns.
- */
-function textsOf(node: unknown, into: string[] = []): string[] {
-  if (typeof node === 'string' || typeof node === 'number') {
-    into.push(String(node));
-  } else if (Array.isArray(node)) {
-    for (const child of node) textsOf(child, into);
-  } else if (typeof node === 'object' && node !== null) {
-    const props = (node as { readonly props?: Record<string, unknown> }).props;
-    for (const value of Object.values(props ?? {})) textsOf(value, into);
-  }
-  return into;
-}
-
-function rendered(viewer: Viewer): string {
-  return textsOf(gateFor(viewer)).join('\n');
-}
-
-/**
- * The four `readAuthEnvironment` checks, and only those.
- *
- * `DATABASE_URL` is deliberately NOT in this list. It is not an auth variable:
- * `sharedAuth()` reads the four, then builds a pool from the database URL, so a
- * gate listing it would be reporting something `readAuthEnvironment` never
- * checks. The first version of this test listed five and asserted on five, and
- * failed — which is the failure working, not a defect in the code.
- */
 const AUTH_VARIABLES = [
   'BETTER_AUTH_SECRET',
   'BETTER_AUTH_URL',
@@ -131,47 +102,6 @@ describe('resolveViewer on a deployment with nothing configured', () => {
     const answer = await resolveViewer(new Headers()).catch(() => 'unreachable' as const);
 
     expect(answer).not.toMatchObject({ kind: 'auth-unconfigured' });
-  });
-});
-
-describe('the gate each answer renders', () => {
-  it('opens for a signed-in viewer, and only for one', () => {
-    expect(gateFor({ kind: 'signed-in', login: 'octocat' })).toBeNull();
-  });
-
-  it('tells a signed-out visitor to sign in, and does NOT blame the operator', () => {
-    // The conflation the module exists to prevent. A logged-out reader must
-    // never be told the platform is misconfigured, because nothing is
-    // misconfigured and they will go looking for a problem that is not there.
-    const markup = rendered({ kind: 'signed-out' });
-
-    expect(markup).toContain('Sign in to see the board');
-    expect(markup).toContain(SIGN_IN_PATH);
-    expect(markup).not.toContain('not configured');
-    expect(markup).not.toContain('.env');
-  });
-
-  it('tells an operator which variables are empty, and does NOT offer a sign-in link', () => {
-    // The mirror image. Offering a sign-in button to somebody whose OAuth app
-    // does not exist sends them through a flow that cannot complete.
-    const markup = rendered({ kind: 'auth-unconfigured', missing: ['GITHUB_CLIENT_ID'] });
-
-    expect(markup).toContain('Sign-in is not configured on this deployment');
-    expect(markup).toContain('GITHUB_CLIENT_ID');
-    expect(markup).not.toContain(SIGN_IN_PATH);
-  });
-
-  it('keeps the three answers distinguishable, which is the whole reason there are three', () => {
-    // Asserted as distinct OUTPUTS rather than as three separate cases, because
-    // the failure is a COLLAPSE: any two of these rendering the same thing is
-    // the bug, and three individually-passing tests would not notice it.
-    const outputs = new Set([
-      rendered({ kind: 'signed-out' }),
-      rendered({ kind: 'auth-unconfigured', missing: ['X'] }),
-      rendered({ kind: 'signed-in', login: 'a' }),
-    ]);
-
-    expect(outputs.size).toBe(3);
   });
 });
 
