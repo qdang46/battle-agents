@@ -28,6 +28,14 @@ integration
 schema-drift
 typecheck
 architecture
+# `adapter-boundary` asserts on a commit's FILE LIST rather than on a reviewer's
+# reading: a change that touches packages/adapters/ may not also touch core/,
+# api/, cli/, mcp-server/ or the generated action ids. It is here because the
+# script existed and nothing invoked it, which is the same defect this manifest
+# was written about. It needs a resolvable base ref, so CI checks out full
+# history -- shallow would make it fail on a missing `HEAD~1` rather than on a
+# real violation.
+adapter-boundary
 schema-hygiene
 removal-test
 # The Moltbook check resolves every cited file:line against the checkout and

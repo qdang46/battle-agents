@@ -52,6 +52,7 @@ readonly CANONICAL_STAGES=(
   schema-drift
   typecheck
   architecture
+  adapter-boundary
   schema-hygiene
   removal-test
   moltbook-claims
@@ -96,6 +97,7 @@ readonly OWNER_DOCS="ba-contributor-onboarding-tc9"
 readonly OWNER_WATCHLIST="ba-watchlist-space-molt-5v4"
 readonly OWNER_ASSETS="ba-asset-shortlist-x2a"
 readonly OWNER_POOLED_DRIVER="ba-neon-cloud-deploy-zn4"
+readonly OWNER_ADAPTER_BOUNDARY="ba-third-party-adapter-proof-2wp"
 readonly OWNER_WEB="ba-web-ui-surface-t3w"
 readonly OWNER_CONTRACT="ba-contract-extension-api-w29"
 readonly OWNER_ARCHITECTURE="ba-dependency-rules-os1"
@@ -689,6 +691,16 @@ run_stage_pooled_driver() {
   run_delegated pooled-driver "$OWNER_POOLED_DRIVER" script:check:pooled-driver
 }
 
+run_stage_adapter_boundary() {
+  # The extensibility claim, asserted on a file list. Plan section 12.1 says
+  # "add feature = add module + register capability, zero core edits" and
+  # section 1.1 says "new CLI = one subdirectory"; this is the mechanical half
+  # of both, and it is scoped to commits that touch an adapter on purpose -- a
+  # blanket ban on touching core would block legitimate core work, which is not
+  # evidence about extensibility either way.
+  run_delegated adapter-boundary "$OWNER_ADAPTER_BOUNDARY" script:check:adapter-boundary
+}
+
 run_stage_asset_licenses() {
   # Per-pack asset licences, separate from the vendored SOURCE licences
   # check-licenses.sh covers. An asset pack is third-party art with its own
@@ -719,6 +731,7 @@ run_stage() {
     migrations) run_stage_migrations ;;
     seed) run_stage_seed ;;
     architecture) run_stage_architecture ;;
+    adapter-boundary) run_stage_adapter_boundary ;;
     schema-hygiene) run_stage_schema_hygiene ;;
     build) run_stage_build ;;
     codegen-drift) run_stage_codegen_drift ;;
