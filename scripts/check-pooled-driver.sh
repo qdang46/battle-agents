@@ -103,4 +103,75 @@ else
   fail 'self-test: the scan did not find a connection it planted, so it proves nothing.'
 fi
 
-printf 'pooled-driver: connections are built in %s only, and the pool is shared.\n' "${ALLOWED[*]}"
+
+# ── Neon, which is a CLOUD choice and never a local one ──────────────────────
+#
+# Plan §37: the local default is container Postgres and is offline-capable;
+# cloud and preview use Neon. So a Neon import in a local path is not a
+# configuration choice, it is a local run that has stopped working offline.
+#
+# The docket recorded this as a MEASUREMENT -- "`@neondatabase/serverless` is
+# not installed in any package, and there is no neonctl invocation, no Neon
+# host, and no Neon import anywhere" -- and a measurement is a claim about one
+# afternoon. This is the check, so the claim holds tomorrow.
+#
+# Deliberately NOT a dependency ban on the lockfile: `@neondatabase/serverless`
+# is legitimately present there as an OPTIONAL PEER of drizzle-kit, and matching
+# the lockfile would report that as a violation and get the check switched off.
+# Source only.
+#
+# Excluded: this script, which contains the patterns as literals, and
+# drizzle.config.ts's OFFLINE_GENERATION_URL, which the docket already
+# explains is a generation-time string that never connects. Matching a file
+# that is required to be present, for a reason documented in a different
+# document, is how a guard becomes noise.
+
+readonly NEON_IMPORT='@neondatabase/[a-z-]+'
+readonly NEON_HOST='[a-z0-9-]+\.(neon\.tech|neon-build\.com)'
+readonly NEON_SCAN_ROOTS=(packages apps scripts)
+readonly NEON_SELF='scripts/check-pooled-driver.sh'
+readonly NEON_EXCLUDED='packages/db/drizzle.config.ts'
+
+neon_offenders() {
+  local file
+  while IFS= read -r file; do
+    case "$file" in
+      "./${NEON_SELF}"|"./${NEON_EXCLUDED}") continue ;;
+    esac
+    printf '%s\n' "$file"
+  done < <(
+    grep -rlE "${NEON_IMPORT}|${NEON_HOST}" "${NEON_SCAN_ROOTS[@]/#/${REPO_ROOT}/}" \
+      --include='*.ts' --include='*.tsx' --include='*.mjs' --include='*.sh' \
+      --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.next 2>/dev/null \
+      | sed "s|^${REPO_ROOT}/|./|"
+  )
+}
+
+neon_found="$(neon_offenders)"
+if [ -n "$neon_found" ]; then
+  printf 'these reach for Neon in a local path:\n' >&2
+  printf '%s\n' "$neon_found" | sed "s|^\./||" >&2
+  fail '§37: the local default is container Postgres and is offline-capable. Neon is for cloud and preview.'
+fi
+
+# The floor, for the same reason the one above exists: a scan matching nothing
+# is not a pass, it is an observation.
+if ! grep -rqE 'postgres' "${REPO_ROOT}/packages/db/src" --include='*.ts' 2>/dev/null; then
+  fail 'packages/db/src no longer mentions a local Postgres, so the offline path may be gone.'
+fi
+
+# Plant a Neon import in a file the scan reads, and prove the scan sees it.
+neon_test_root="${REPO_ROOT}/.tmp/neon-selftest"
+rm -rf "$neon_test_root"
+mkdir -p "$neon_test_root/packages/fake"
+printf "import { neon } from '@neondatabase/serverless';\n" \
+  >"${neon_test_root}/packages/fake/offender.ts"
+if grep -rqE "${NEON_IMPORT}" "$neon_test_root/packages" --include='*.ts' 2>/dev/null; then
+  rm -rf "$neon_test_root"
+  printf 'self-test ok: a planted Neon import is detected.\n'
+else
+  rm -rf "$neon_test_root"
+  fail 'self-test: the scan did not find the Neon import it planted, so it proves nothing.'
+fi
+
+printf 'pooled-driver: connections are built in %s only, the pool is shared, and no local path reaches for Neon.\n' "${ALLOWED[*]}"
