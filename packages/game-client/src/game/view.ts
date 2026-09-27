@@ -123,6 +123,44 @@ export class PixiWorldView implements WorldViewLike {
   }
 
   /**
+   * Fits the whole grid into a viewport of this size, and centres it.
+   *
+   * ## Why this exists
+   *
+   * `topdown(TILE_WORLD_PX)` maps the 32x32 grid to 32 * 48 = 1536 square
+   * pixels and nothing scaled that to the canvas, so the world stayed 1536x1536
+   * inside a viewport a few hundred pixels tall. Measured in a running browser:
+   * canvas 1230x458, an idle agent's sprite at world (864, 864). The sprite
+   * existed, its texture was a valid 16x16, it was visible, correctly parented
+   * and correctly scaled — and it was 400px below the bottom of the picture.
+   *
+   * There is no camera, so this is the camera. Uniform on both axes and
+   * centred, not stretched to fill: a non-uniform scale turns a round sprite
+   * into an ellipse, and letterboxing keeps the whole map readable instead of
+   * filling the screen with a third of it.
+   *
+   * ## Why it is here and not on `WorldViewLike`
+   *
+   * That seam is four members wide on purpose, and a resize method is exactly
+   * the kind of thing that makes it a fifth: every host would be handed a
+   * viewport question it cannot answer without knowing the grid. The grid and
+   * the tile size are this class's own, and `CountingView` has neither.
+   */
+  fit(width: number, height: number): void {
+    // A zero-sized viewport happens on the first layout pass, and a scale of
+    // zero would leave the world invisible until something refitted it. Skipping
+    // is the honest answer: there is nothing to fit INTO yet.
+    if (width <= 0 || height <= 0) return;
+    const worldPx = DEFAULT_GRID.w * TILE_WORLD_PX;
+    const scale = Math.min(width / worldPx, height / worldPx);
+    this.worldLayer.scale.set(scale);
+    this.worldLayer.position.set(
+      (width - worldPx * scale) / 2,
+      (height - worldPx * scale) / 2,
+    );
+  }
+
+  /**
    * Applies a delta for the named agents, and nothing else.
    *
    * The loop is over `agentIds` and there is no second loop. A view that needed

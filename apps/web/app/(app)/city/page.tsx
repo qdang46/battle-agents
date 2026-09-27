@@ -92,6 +92,19 @@ export default function CityPage(): React.JSX.Element {
         const view = new PixiWorldView({ store });
         app.stage.addChild(view.root);
 
+        // Fit the map to the canvas, and keep fitting it. Without this the
+        // world stays 1536x1536 in a viewport a few hundred pixels tall and an
+        // idle agent — grid (18,18), world pixel (864,864) — is 400px below the
+        // bottom edge: the character rendered perfectly, just not inside the
+        // picture. packages/game-client/src/game/fit.test.ts is the arithmetic.
+        const refit = (): void => {
+          view.fit(container.clientWidth, container.clientHeight);
+        };
+        refit();
+        const observer = new ResizeObserver(refit);
+        observer.observe(container);
+        clearups.push(() => observer.disconnect());
+
         // The real stream, and the real browser EventSource. The client refuses
         // to default this so that a missing factory fails at wiring time rather
         // than at connect time — which is exactly what would happen here.
