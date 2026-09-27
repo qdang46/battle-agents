@@ -38,8 +38,16 @@ export const POST = async (
   const response: HttpResponse = await (await sharedQuestGateway()).handle(httpRequest);
   return new Response(JSON.stringify(response.body), {
     status: response.status,
-    // exactOptionalPropertyTypes: a response with no headers omits the field
-    // rather than carrying an explicit undefined, so the spread needs no guard.
-    ...(response.headers === undefined ? {} : { headers: response.headers }),
+    // `application/json` is STATED rather than left to the default. A Response
+    // built without a content-type announces `text/plain`, so this API was
+    // serving correct JSON labelled as text -- the shape
+    // `docs/design/cloud-deploy-docket.md` already recorded as a trap for
+    // whoever wired the deploy workflow. Same class of fault as the `/api/mcp`
+    // adapter, which answered every request with the eight characters
+    // `[object Object]`.
+    //
+    // The handler's own headers are spread LAST so a route that sets a
+    // content-type deliberately is not overridden by this default.
+    headers: { 'content-type': 'application/json', ...(response.headers ?? {}) },
   });
 };

@@ -25,5 +25,11 @@ export const POST = async (request: Request): Promise<Response> => {
   };
 
   const response = await (await sharedGithubWebhook())(webhookRequest);
-  return new Response(JSON.stringify(response.body), { status: response.status });
+  // `application/json` stated, for the reason the other fourteen routes carry:
+  // a Response built without one announces `text/plain`, so this route served
+  // correct JSON labelled as text.
+  return new Response(JSON.stringify(response.body), {
+    status: response.status,
+    headers: { 'content-type': 'application/json' },
+  });
 };
