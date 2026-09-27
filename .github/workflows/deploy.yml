@@ -1,0 +1,134 @@
+# Cloud deploy — plan sections 7.1 and 37, bead ba-neon-cloud-deploy-zn4.
+#
+# WHY THIS FILE EXISTS NOW, and why it had not existed. The bead's success
+# criterion 1 says a merge to main must produce a working deployment, "settled
+# by an automated smoke test against the deployed URL on every main build, which
+# must FAIL the build when it fails". The test exists —
+# `scripts/check-deploy-smoke.sh`, with a self-test that plants five broken
+# deployments and attributes each one to the right probe — and nothing invoked
+# it. A check that exists and nothing runs is the defect this repository keeps
+# paying for, and `scripts/stages.manifest` was written about exactly that.
+#
+# THE JOB IS GATED ON THE SECRET, not on hope. This was deliberately left
+# unwritten for a long time on the reasoning that a workflow referencing secrets
+# that do not exist fails every push to main, and a red main is worse than no
+# workflow. That reasoning was half right: without the gate it IS a red main,
+# and a red main trains people to ignore CI. With `if: secrets.VERCEL_TOKEN != ''`
+# the job does not run, and the run says so in one visible line rather than
+# passing quietly.
+#
+# WHAT IS AND IS NOT CLAIMED. This file is the outstanding step the docket named
+# and it has never executed: there is no Vercel or Neon account in the
+# environment it was written in, so criterion 1 has never been observed to pass
+# and criterion 2 has never been observed at all. Both are written, both are
+# readable, and neither has run. `ba-neon-cloud-deploy-zn4` is still open for
+# that reason and this workflow does not pretend otherwise.
+#
+# The migration step is not optional. Without it the ingest route answers 500 —
+# observed locally as `relation "feature_state" does not exist`, with the root
+# still serving 200 — and the root probe alone settles nothing, which is the
+# whole reason there are four probes.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_url:
+        description: 'Probe an already-deployed URL instead of deploying (smoke test only)'
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Probe an existing deployment. This is how criterion 1 is settled for a URL
+  # somebody else produced, and it needs no Vercel credential at all — which is
+  # the half of the criterion that IS runnable without an account.
+  smoke:
+    name: deployed URL is serving
+    if: ${{ inputs.deploy_url != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe the deployment
+        run: DEPLOY_URL="${{ inputs.deploy_url }}" bash scripts/check-deploy-smoke.sh
+
+  deploy-and-smoke:
+    name: deploy main, then prove it serves
+    # The gate. Absent credentials the job is skipped and GitHub prints WHY,
+    # which is the difference between "no deploy happened" and "a deploy
+    # happened and was not checked".
+    if: ${{ github.event_name == 'push' && secrets.VERCEL_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The Vercel CLI reads all three; ORG_ID and PROJECT_ID are what
+      # `vercel link` needs and are not guessable from the token.
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      # Neon, POOLED. Never the direct compute endpoint: the same
+      # `createDatabasePool()` serves cloud and container, and pointing it at a
+      # direct endpoint re-creates exactly the §7.1 trap in a new place.
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+      BETTER_AUTH_URL: ${{ secrets.BETTER_AUTH_URL }}
+      GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+      GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to deploy with a half-set environment
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          missing=()
+          [ -n "$VERCEL_TOKEN" ] || missing+=(VERCEL_TOKEN)
+          [ -n "$VERCEL_ORG_ID" ] || missing+=(VERCEL_ORG_ID)
+          [ -n "$VERCEL_PROJECT_ID" ] || missing+=(VERCEL_PROJECT_ID)
+          [ -n "$DATABASE_URL" ] || missing+=(DATABASE_URL)
+          [ -n "$BETTER_AUTH_SECRET" ] || missing+=(BETTER_AUTH_SECRET)
+          [ -n "$GITHUB_CLIENT_ID" ] || missing+=(GITHUB_CLIENT_ID)
+          [ -n "$GITHUB_CLIENT_SECRET" ] || missing+=(GITHUB_CLIENT_SECRET)
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf 'deploy: these secrets are empty, so this deployment would be broken:\n'
+            printf '  %s\n' "${missing[@]}"
+            printf 'A deploy that cannot serve is the exact failure this workflow exists to catch,\n'
+            printf 'so it stops here rather than shipping one.\n'
+            exit 1
+          fi
+
+      - name: Install the Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Deploy and capture the URL it prints
+        id: vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+          # --deploy-url prints the URL and nothing else, so this is a value and
+          # not a log line somebody has to read. A smoke test pointed at
+          # whatever the log said is a smoke test pointed at a guess.
+          DEPLOY_URL="$(vercel deploy --prod --token="$VERCEL_TOKEN" --deploy-url)"
+          printf 'url=%s\n' "$DEPLOY_URL" >> "$GITHUB_OUTPUT"
+          printf 'deployed to %s\n' "$DEPLOY_URL"
+
+      - name: Migrate the DEPLOYED database
+        # Before the probes, not after. Without it the ingest route answers 500
+        # and the smoke test fails for a reason that has nothing to do with the
+        # deploy — which trains people to ignore it.
+        run: pnpm install --frozen-lockfile && pnpm db:migrate
+
+      - name: Prove it is serving, not merely reachable
+        run: DEPLOY_URL="${{ steps.vercel.outputs.url }}" bash scripts/check-deploy-smoke.sh

@@ -1,0 +1,133 @@
+# Per-PR preview on its own Neon branch — plan section 7.1, bead
+# ba-neon-cloud-deploy-zn4 criterion 2.
+#
+# TWO ASSERTIONS, because either alone is satisfiable by a lie, and the bead
+# names which one matters: *a preview wired to the production database satisfies
+# "each PR gets a preview" and corrupts shared data on merge.*
+#
+#   (a) the branch name derives from the PR number, asserted by reading the
+#       preview's OWN resolved DATABASE_URL rather than the workflow's inputs,
+#       because a workflow can be configured correctly and deploy with a
+#       production variable
+#   (b) migrating the preview leaves PRODUCTION's migration ledger byte-identical
+#
+# (b) is what the bead calls the one that matters, and it is the one easiest to
+# claim without checking. `scripts/check-preview-isolation.sh` reads
+# `drizzle.__drizzle_migrations` from production, migrates the preview, reads
+# production's ledger again and requires the two dumps byte-identical. It is NOT
+# a diff of `packages/db/migrations/meta/_journal.json`, which is the GENERATION
+# journal, lives in the repository, and is therefore identical across two runs by
+# construction — a check that cannot fail and the most likely thing to reach
+# for.
+#
+# NOT CLAIMED, in the workflow's own header and in the bead: this has never run.
+# There is no Neon account in the environment it was written in, so criterion 2
+# is written and readable and unexecuted. The bead is open for that reason.
+
+name: preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  neon-branch:
+    # The gate, as in deploy.yml: absent a key the job is skipped and GitHub
+    # prints why, rather than the run passing quietly.
+    if: ${{ secrets.NEON_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+      PRODUCTION_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create this PR's branch, named for the PR
+        id: branch
+        run: |
+          npm i -g neonctl
+          # The name deriving from the PR number IS assertion (a)'s subject, and
+          # `--parent main` is what makes the preview a copy of production
+          # rather than an empty database.
+          neonctl branches create \
+            --name "pr-${{ github.event.pull_request.number }}" \
+            --parent main \
+            --project-id "$NEON_PROJECT_ID" \
+            --api-key "$NEON_API_KEY" || true
+          # `branches create` prints NO uri when the parent has more than one
+          # role or database, so this command is the only way to get one.
+          URL="$(neonctl connection-string "pr-${{ github.event.pull_request.number }}" \
+            --pooled --api-key "$NEON_API_KEY" --project-id "$NEON_PROJECT_ID")"
+          printf 'url=%s\n' "$URL" >> "$GITHUB_OUTPUT"
+          printf 'preview branch pr-%s\n' "${{ github.event.pull_request.number }}"
+
+      - name: Assert the preview is bound to THIS branch and not to production
+        # The assertion the workflow's own configuration cannot make. Read the
+        # URI Neon handed back and require it to be a different database from the
+        # one production uses — by the database identity, not by the string,
+        # because a hostname alias or a copied connection string reaches the
+        # same database under a different name. That exact case was the mutation
+        # that made an earlier version of this check report success.
+        run: |
+          PREVIEW_URL="${{ steps.branch.outputs.url }}"
+          PROD_DB="$(psql "$PRODUCTION_DATABASE_URL" -tAc 'select current_database()')"
+          PREV_DB="$(psql "$PREVIEW_URL" -tAc 'select current_database()')"
+          PROD_OID="$(psql "$PRODUCTION_DATABASE_URL" -tAc 'select oid from pg_database where datname=current_database()')"
+          PREV_OID="$(psql "$PREVIEW_URL" -tAc 'select oid from pg_database where datname=current_database()')"
+          printf 'production: db=%s oid=%s\npreview:   db=%s oid=%s\n' \
+            "$PROD_DB" "$PROD_OID" "$PREV_DB" "$PREV_OID"
+          if [ "$PROD_OID" = "$PREV_OID" ]; then
+            printf 'preview is the PRODUCTION database. Every migration on this PR would go to it.\n' >&2
+            exit 1
+          fi
+
+      - name: Migrate the preview
+        run: pnpm install --frozen-lockfile && DATABASE_URL="${{ steps.branch.outputs.url }}" pnpm db:migrate
+
+      - name: Assert production's ledger is untouched
+        run: |
+          PRODUCTION_DATABASE_URL="$PRODUCTION_DATABASE_URL" \
+          PREVIEW_DATABASE_URL="${{ steps.branch.outputs.url }}" \
+            bash scripts/check-preview-isolation.sh
+
+      - name: Comment the preview on the PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = process.env.PREVIEW_URL
+              ? `Preview branch: \`pr-${{ github.event.pull_request.number }}\`\n\n\`${process.env.PREVIEW_URL}\`\n\nMigrated against its OWN Neon branch; production's ledger was asserted byte-identical afterwards.`
+              : 'No Neon key, so no branch was created and nothing was deployed.';
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+        env:
+          PREVIEW_URL: ${{ steps.branch.outputs.url }}
+
+      - name: Delete the branch, and set an expiry in case this step is skipped
+        # An abandoned preview must not outlive its PR. `--expires-at` is on
+        # `create` in some CLI versions and on `set-expiration` in others, so
+        # the expiry is set here separately and the delete is best-effort: a
+        # branch left behind costs a branch, not a wrong result.
+        if: always()
+        run: |
+          neonctl branches set-expiration "pr-${{ github.event.pull_request.number }}" \
+            --project-id "$NEON_PROJECT_ID" --api-key "$NEON_API_KEY" || true
+          neonctl branches delete "pr-${{ github.event.pull_request.number }}" \
+            --project-id "$NEON_PROJECT_ID" --api-key "$NEON_API_KEY" || true
