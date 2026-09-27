@@ -522,7 +522,22 @@ describe('the share metadata', () => {
       buildPublicReplay({ replayId: 'replay-1', entries: [] }),
       'https://agentbattle.gg',
     );
-    expect(share.title).toContain('no longer retained');
+    expect(share.title).toContain('no events in the log');
+  });
+
+  it('does not claim the battle finished, which the log cannot know', () => {
+    // A battle with no beats gets the same `expired` state whether it ended an
+    // hour ago or is RUNNING RIGHT NOW -- the state machine cannot tell them
+    // apart. The share text asserted both that it finished and that its events
+    // aged out, which are two separate claims neither of which the log supports.
+    // The page's own ExpiredNotice was corrected for exactly this and these two
+    // strings were missed. Found by rendering /replay against a real `running`
+    // battle row and reading what it said.
+    const share = replayShareMetadata(
+      buildPublicReplay({ replayId: 'replay-1', entries: [] }),
+      'https://agentbattle.gg',
+    );
+    expect(`${share.title} ${share.description}`).not.toMatch(/finished|retention/i);
   });
 
   it('formats a duration the way a reader reads one', () => {

@@ -636,10 +636,20 @@ export function replayShareMetadata(replay: PublicReplay, origin: string): Repla
     .join(' vs ');
 
   if (replay.state === 'expired') {
+    // Same discipline as the page's ExpiredNotice, and it was missing here: the
+    // notice was corrected for asserting a retention the log cannot support, and
+    // these two strings went on asserting it. "Finished" is a claim about the
+    // battle, and a battle with no beats gets the same state whether it ended
+    // an hour ago or is RUNNING RIGHT NOW -- the state machine cannot tell them
+    // apart, so this text must not. "No longer retained" says the same thing
+    // more quietly: that there was something and it is gone.
+    //
+    // Found by rendering /replay in a browser against a real battle row with
+    // status `running` and no tagged events, and reading what it said.
     return {
-      title: 'Battle replay — timeline no longer retained',
+      title: 'Battle replay — no events in the log',
       description:
-        'This battle finished, and the events its replay is built from are past the log’s retention window.',
+        'The activity log holds no events for this battle. It cannot say whether they were pruned or were never written.',
       url,
     };
   }
