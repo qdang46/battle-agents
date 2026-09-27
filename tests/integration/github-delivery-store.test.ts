@@ -8,7 +8,7 @@ import {
   githubDeliveryClaims,
 } from '@battle-agents/db';
 import type { ClaimRow } from '@battle-agents/db';
-import { eq } from 'drizzle-orm';
+import { eq, like } from 'drizzle-orm';
 
 /**
  * The delivery ledger against a real database.
@@ -25,6 +25,26 @@ import { eq } from 'drizzle-orm';
 const DATABASE_URL_VARIABLE = 'DATABASE_URL';
 const AT = '2026-09-26T00:00:00.000Z';
 const POOL_MAX_CONNECTIONS = 4;
+
+/**
+ * This file's delivery-id namespace.
+ *
+ * Every id below starts with `d-` and nothing else in the suite uses that
+ * prefix, so the cleanup can clear its own rows and leave the rest of a SHARED
+ * table alone. It used to be `delete(githubDeliveryClaims)` — the whole table —
+ * which is the correct-looking way to start clean and is wrong for the same
+ * reason it was wrong in `github-webhook-end-to-end.test.ts`: vitest runs files
+ * in parallel workers against one database, so a blanket delete lands in the
+ * middle of another suite's run and takes its rows with it.
+ *
+ * The prefix is a CONVENTION rather than an enforced namespace, and the test
+ * `no-suite-wipes-the-shared-delivery-table` is what makes it one: it fails if
+ * any suite that writes this table deletes it unscoped, and if a second file
+ * adopts these ids the two start fighting again. An earlier version of this
+ * comment named the constant and implied the literals were checked against it;
+ * they are not, and pretending otherwise is the comment being a lie.
+ */
+const LEDGER_ID_PREFIX = 'd-';
 
 let pool: Pool;
 
@@ -55,7 +75,10 @@ beforeAll(async () => {
   }
   pool = new Pool({ connectionString, max: POOL_MAX_CONNECTIONS });
   const database = createDatabase(pool);
-  await database.delete(githubDeliveryClaims);
+  // Scoped to this file's namespace, and to nothing else in the table.
+  await database
+    .delete(githubDeliveryClaims)
+    .where(like(githubDeliveryClaims.deliveryId, `${LEDGER_ID_PREFIX}%`));
 });
 
 afterAll(async () => {
