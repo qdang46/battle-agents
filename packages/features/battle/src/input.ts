@@ -37,6 +37,7 @@ export type BattleRejection =
   | { readonly reason: 'results-not-an-array' }
   | { readonly reason: 'results-empty' }
   | { readonly reason: 'result-not-an-object' }
+  | { readonly reason: 'result-criteria-not-an-array' }
   | { readonly reason: 'result-criterion-unknown' }
   | { readonly reason: 'result-score-not-finite' }
   | { readonly reason: 'result-score-out-of-range' }
@@ -55,8 +56,30 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 /** An ISO 8601 instant. `Date.parse` accepting a bare word is the risk this rejects. */
+/**
+ * An ISO 8601 instant that CARRIES ITS OFFSET, not merely one Date.parse can
+ * chew.
+ *
+ * `Date.parse` is not this check. It accepts `'2026-01-01 00:00:00'`, reads it
+ * as LOCAL time, and returns a number — so a submittedAt with no zone was being
+ * written into the record a dispute is settled from, ambiguous to whoever reads
+ * it on a machine in a different one.
+ *
+ * The protocol already decided this for the same reason and enforced it at the
+ * wire: `agent-event.ts` says "Adapters in several languages emit local
+ * timestamps without a zone designator. Those are ambiguous once the event
+ * leaves the machine that wrote it, so the wire contract requires an explicit
+ * offset and rejects them at the boundary." A scored battle is at least as
+ * consequential as a tool event, and it was the one place the rule was not
+ * applied.
+ *
+ * The trailing `Z` or `±HH:MM` is what makes it an instant rather than a local
+ * time someone hopes is obvious.
+ */
 function isInstant(value: unknown): value is string {
-  return typeof value === 'string' && value !== '' && !Number.isNaN(Date.parse(value));
+  if (typeof value !== 'string' || value === '') return false;
+  if (Number.isNaN(Date.parse(value))) return false;
+  return /(?:Z|[+-]\d{2}:?\d{2})$/.test(value);
 }
 
 /**
@@ -228,7 +251,14 @@ export function whyBattleResultIsRejected(input: unknown): BattleRejection | und
   }
   const criteria = draft['criteria'];
   if (!Array.isArray(criteria)) {
-    return { reason: 'not-an-object' };
+    // Its OWN reason, and not the general `not-an-object`. That one describes
+    // the RESULT not being an object, and a caller who sent the criteria as a
+    // keyed object instead of a list was told the entry itself was malformed --
+    // which is not the thing they got wrong, and reads as a bug in their result
+    // rather than as a shape they had not read. Found by calling the real
+    // endpoint with `score: {...}`, which is the natural guess, and being told
+    // `not-an-object` by a route that otherwise names every field precisely.
+    return { reason: 'result-criteria-not-an-array' };
   }
   const seen = new Set<string>();
   for (const entry of criteria) {
