@@ -401,12 +401,19 @@ describe('eight skills, and no single power scalar', () => {
     }
 
     const trained = Object.values(skills).reduce((sum, xp) => sum + xp, 0);
-    // 2250 paid in total and 1750 of it evidenced by a discipline. The gap is
+    // 2500 paid in total and 2000 of it evidenced by a discipline. The gap is
     // the battle win, which pays the character and trains nothing, and it is
     // written down because a future outcome that trains a skill would move this
     // number and someone should have to look at why.
-    expect(total).toBe(2250);
-    expect(trained).toBe(1750);
+    //
+    // It moved once, for `quest.completed` at 250 coding XP, and the reason it
+    // moved is the reason this assertion exists: a quest that completed paid
+    // nothing at all, because the quest feature emits `quest.completed` with its
+    // reward in the payload and the outcome table had no entry for it. Found by
+    // completing a real quest over HTTP and reading the agent's experience
+    // afterwards -- 0, against a reward the API had just reported as 250.
+    expect(total).toBe(2500);
+    expect(trained).toBe(2000);
     expect(trained).toBeLessThan(total);
   });
 

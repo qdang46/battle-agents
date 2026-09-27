@@ -136,7 +136,13 @@ export function progressionFeature(dependencies: ProgressionDependencies): GameF
     }
 
     const before = await repository.ensure({ agentId }, context.now());
-    const after = apply(before, outcome, context.now(), weights);
+    // A quest names its own reward and the table's number is only its default.
+    // Reading the payload is what makes `xpReward` mean anything: difficulty
+    // varies per quest, so a fixed entry would make the published field
+    // decorative in the OTHER direction -- every quest paying the same amount
+    // while the API reported a different one.
+    const paid: Outcome = { ...outcome, ...xpRewardFromEvent(event) };
+    const after = apply(before, paid, context.now(), weights);
     if (after.xp === before.xp && after.level === before.level) {
       return;
     }
@@ -319,6 +325,21 @@ async function summarize(
  * disagrees with itself, and a retune that only reaches `explainBuild` changes
  * what the feature SAYS about a character without changing what it BELIEVES.
  */
+/**
+ * The reward an event names for itself, when it names one.
+ *
+ * Only a finite, non-negative number is honoured, so a quest that published a
+ * string, a negative, or nothing at all falls back to the table rather than
+ * writing a nonsensical award. The payload is another feature's, so it is
+ * untrusted by construction.
+ */
+export function xpRewardFromEvent(event: GameEvent): { readonly xp?: number } {
+  if (event.type !== 'quest.completed') return {};
+  const value = (event.payload as { readonly xpReward?: unknown }).xpReward;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return {};
+  return { xp: value };
+}
+
 export function apply(
   before: AgentProgress,
   outcome: Outcome,

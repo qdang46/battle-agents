@@ -13,7 +13,7 @@ import {
   type AgentProgress,
 } from './domain.js';
 import type { ProgressionRepository } from './repository.js';
-import { apply, progressionFeature, type GateDecision, type LevelGateView } from './feature.js';
+import { apply, progressionFeature, xpRewardFromEvent, type GateDecision, type LevelGateView } from './feature.js';
 import {
   DEFAULT_BUILD,
   DEFAULT_BUILD_WEIGHTS,
@@ -837,5 +837,47 @@ describe('a skill is not a build', () => {
     const after = repository.rows.get(AGENT);
     expect(Object.keys((after as AgentProgress).skills).sort()).toEqual([...SKILLS].sort());
     expect((after as AgentProgress).skills.testing).toBe(100);
+  });
+});
+
+describe('a quest that completed', () => {
+  it('pays the reward the quest NAMED, not the table default', () => {
+    // The quest publishes its own reward and it varies with difficulty, so a
+    // fixed table entry alone would make `xpReward` decorative in the other
+    // direction: every quest paying the same amount while the API reported a
+    // different one.
+    const event = {
+      type: 'quest.completed',
+      occurredAt: '2026-01-01T00:00:00.000Z',
+      actorId: 'agent-1',
+      payload: { agentId: 'agent-1', questId: 'q-1', xpReward: 900 },
+    };
+
+    expect(xpRewardFromEvent(event)).toEqual({ xp: 900 });
+    // Without the payload, the table's number stands.
+    expect(xpRewardFromEvent({ ...event, payload: { agentId: 'agent-1' } })).toEqual({});
+  });
+
+  it('ignores a reward another feature got wrong, rather than writing it', () => {
+    // The payload belongs to another feature, so it is untrusted by
+    // construction. A string, a negative, or an infinity must not become an
+    // award that the level curve then has to cope with.
+    const base = { type: 'quest.completed', occurredAt: '2026-01-01T00:00:00.000Z', actorId: 'agent-1' };
+    for (const xpReward of ['900', -1, Number.POSITIVE_INFINITY, Number.NaN, null, undefined]) {
+      expect(xpRewardFromEvent({ ...base, payload: { agentId: 'agent-1', xpReward } })).toEqual({});
+    }
+  });
+
+  it('leaves a bounty completion on the table amount, which names no reward of its own', () => {
+    // A bounty's worth is fixed by the table and the event does not carry one,
+    // so reading the payload must not invent an override for it.
+    expect(
+      xpRewardFromEvent({
+        type: 'bounty.completed',
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        actorId: 'agent-1',
+        payload: { agentId: 'agent-1', xpReward: 99999 },
+      }),
+    ).toEqual({});
   });
 });

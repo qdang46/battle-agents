@@ -36,6 +36,18 @@ export const OUTCOME_TYPES = [
   'test.passed',
   'session.recovered',
   'battle.finished',
+  // The quest feature's own header says "The XP a quest is worth is read by
+  // progression from `quest.completed`", and it emits that event with
+  // `xpReward` in the payload. There was no entry here, so `outcomeFor` returned
+  // undefined, `awardFor` returned, and a completed quest paid NOTHING while
+  // the submit response handed the caller its xpReward as though it had been
+  // earned. Found by claiming and submitting a real quest over HTTP and reading
+  // the agent's experience afterwards: 0.
+  //
+  // Its table xp is a FALLBACK. A quest names its own reward, and the reward
+  // varies with difficulty, so a fixed number would make `xpReward` decorative
+  // in the other direction. `xpRewardFromEvent` prefers the payload.
+  'quest.completed',
 ] as const;
 
 export type OutcomeType = (typeof OUTCOME_TYPES)[number];
@@ -121,6 +133,7 @@ export const OUTCOMES: Readonly<Record<OutcomeType, Outcome>> = {
   // never pay for the same merge anyway. A pull request is the moment somebody
   // else read the work and accepted it, which is the part of shipping that is
   // not coding.
+  'quest.completed': { xp: 250, build: 'builder', weight: 1, skill: 'coding' },
   'pr.merged': {
     xp: 500,
     build: 'refactorer',
