@@ -39,6 +39,7 @@
  * has no dependencies and the layering checker reads that as structural.
  */
 
+import { NAMESPACED_ID_PATTERN } from './actions.js';
 import type { GameEvent } from './event.js';
 
 // ── The watcher lifecycle this seam settles ─────────────────────────────
@@ -176,8 +177,15 @@ export interface TeamProvider {
  * both plausible ids, and the day a second one appears the first one's
  * installation, consent record and hooks are silently shared with it. Requiring
  * a namespace makes the collision a startup error instead of a support ticket.
+ *
+ * It IS the same rule, and now it is literally the same regex. This used to be
+ * a second copy that had drifted — it allowed a hyphen in a later segment where
+ * ACTION_ID_PATTERN did not — so vendor.some-cli was a valid provider and an
+ * invalid action, while both files claimed one rule. The single pattern lives
+ * in actions.ts; a test compares the two, so a future divergence is a red test
+ * rather than a comment nobody believes.
  */
-export const HOOK_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9-]*)+$/;
+export const HOOK_PROVIDER_ID_PATTERN = NAMESPACED_ID_PATTERN;
 
 /** Whether an id is shaped like a provider id. */
 export function isHookProviderId(id: string): boolean {

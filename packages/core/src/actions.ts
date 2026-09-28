@@ -11,6 +11,21 @@ import type { ActionDef, RuntimeContext } from './contracts.js';
 export const ACTION_ID_PATTERN = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
 
 /**
+ * The one rule for every namespaced identifier in this package.
+ *
+ * An action id, a capability name and a hook provider id are all
+ * `namespace.thing`, lower-case, and all exist for the same reason: a bare `claim`
+ * or a bare `claude` collides the day two things have one, and the collision
+ * surfaces as one thing silently answering for another.
+ *
+ * These were three regexes that had drifted — the provider one allowed a hyphen
+ * in a later segment and the other two did not — so `vendor.some-cli` was a valid
+ * provider and an invalid action, and a comment in each file insisted they were
+ * the same rule. One pattern, so they cannot disagree again.
+ */
+export const NAMESPACED_ID_PATTERN = ACTION_ID_PATTERN;
+
+/**
  * Declares one typed action and rejects the two ways the action registry goes
  * wrong in practice.
  *

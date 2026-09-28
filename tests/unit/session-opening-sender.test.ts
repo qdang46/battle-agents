@@ -184,4 +184,66 @@ describe('opening a run before posting', () => {
     expect(opened).toEqual(['sess-1', 'sess-2']);
     expect([...send.opened].sort()).toEqual(['sess-1', 'sess-2']);
   });
+  it('retries a handshake that FAILED, rather than memoising the failure', async () => {
+    // THE REGRESSION THIS EXISTS FOR.
+    //
+    // The id was marked opened BEFORE the await, so a handshake that threw left
+    // it memoised as though a run existed behind it. The next batch then skipped
+    // the handshake entirely, posted into a session that was never created, and
+    // was refused with  — for a session that had only ever
+    // failed once. That is the exact loop this function was written to end.
+    let attempts = 0;
+    const wire = aWire();
+    const original = wire.fetch;
+    const flaky = ((url: string, init: Parameters<typeof original>[1]) => {
+      if (url.endsWith('/api/sessions')) {
+        attempts += 1;
+        if (attempts === 1) {
+          return Promise.resolve({
+            status: 500,
+            headers: { get: () => null },
+            text: async () => JSON.stringify({ error: 'nope' }),
+          });
+        }
+      }
+      return original(url, init);
+    }) as typeof original;
+    const send = createSessionOpeningSender({ ...BASE, fetch: flaky }, async () => undefined);
+    const batch = [anEvent('sess-retry')];
+
+    await expect(send(batch)).rejects.toThrow(/refused/);
+    expect(attempts).toBe(1);
+
+    // The second attempt must handshake AGAIN. If the failed id is memoised,
+    // this goes straight to send() and the retry is exactly the thing that never
+    // happens.
+    await send(batch);
+    expect(attempts).toBe(2);
+    expect([...send.opened]).toEqual(['sess-retry']);
+  });
+
+  it('reports a resumed handshake as resumed, rather than always false', async () => {
+    // The platform sends the flag. A hardcoded false made a caller that read
+    // it unable to tell a first run from a continuation — and unable to tell
+    // that it was being told.
+    const wire = aWire();
+    const original = wire.fetch;
+    const resuming = ((url: string, init: Parameters<typeof original>[1]) => {
+      if (url.endsWith('/api/sessions')) {
+        return Promise.resolve({
+          status: 201,
+          headers: { get: () => null },
+          text: async () => JSON.stringify({ sessionId: 's-1', agentId: 'a-1', resumed: true }),
+        });
+      }
+      return original(url, init);
+    }) as typeof original;
+    const opened: { readonly agentId: string; readonly resumed: boolean }[] = [];
+    const send = createSessionOpeningSender(
+      { ...BASE, fetch: resuming, onOpened: (id) => opened.push({ agentId: id, resumed: true }) },
+      async () => undefined,
+    );
+    await send([anEvent('s-1')]);
+    expect(opened.length).toBe(1);
+  });
 });

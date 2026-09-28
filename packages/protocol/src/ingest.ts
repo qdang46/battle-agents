@@ -252,14 +252,22 @@ export async function sayHello(options: HelloOptions): Promise<HelloResult> {
     // looks at the log at all.
     throw new HelloRefusedError(response.status, body);
   }
-  const result = body as { readonly sessionId?: unknown; readonly agentId?: unknown };
+  const result = body as {
+    readonly sessionId?: unknown;
+    readonly agentId?: unknown;
+    readonly resumed?: unknown;
+  };
   if (typeof result.sessionId !== 'string') {
     throw new HelloRefusedError(response.status, body);
   }
   return {
     sessionId: result.sessionId,
+    // Read, not invented. This returned a hardcoded `false` and an empty string
+    // for a field the platform really does send, so a caller reading either got
+    // a confident wrong answer — and `resumed` is the one field that tells an
+    // adapter whether the run it just opened is a continuation or a first run.
     agentId: typeof result.agentId === 'string' ? result.agentId : '',
-    resumed: false,
+    resumed: result.resumed === true,
   };
 }
 
@@ -328,7 +336,15 @@ export function createSessionOpeningSender(
       if (typeof id !== 'string' || id.length === 0 || seen.has(id)) continue;
       seen.add(id);
       if (opened.has(id)) continue;
-      opened.add(id);
+      // Marked OPEN only after the handshake returns.
+      //
+      // The order was the other way round, and it re-created the exact failure
+      // this function exists to end: a handshake that throws left the id
+      // memoised as though a run existed behind it, so the next batch skipped
+      // the handshake, posted into a session that was never created, and was
+      // refused with `no such session` — forever, for a session that only ever
+      // failed once. A retry is the correct behaviour after a failed handshake;
+      // a memo of a failure is not.
       await sayHello({
         baseUrl: options.baseUrl,
         token: options.token,
@@ -337,6 +353,7 @@ export function createSessionOpeningSender(
         harnessSessionRef: id,
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
       });
+      opened.add(id);
       options.onOpened?.(id);
     }
     await send(batch);

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { NAMESPACED_ID_PATTERN } from './actions.js';
+
 import {
   HOOK_PROVIDER_ID_PATTERN,
   isHookProviderId,
@@ -63,7 +65,12 @@ function stubProvider(overrides: Partial<HookProvider> = {}): HookProvider & {
 describe('provider ids', () => {
   it('accepts a namespaced id', () => {
     expect(isHookProviderId('anthropic.claude')).toBe(true);
-    expect(isHookProviderId('vendor.some-cli')).toBe(true);
+    // 'vendor.some-cli' was valid HERE and invalid as an action id, because this
+    // file's regex allowed a hyphen in a later segment and actions.ts's did not.
+    // One pattern means the answer is the same in both places, and a provider id
+    // is now exactly as strict as an action id.
+    expect(isHookProviderId('vendor.some-cli')).toBe(false);
+    expect(isHookProviderId('vendor.somecli')).toBe(true);
   });
 
   it('rejects a bare harness name', () => {
@@ -167,5 +174,13 @@ describe('the optional team extension', () => {
     };
     const withTeams = stubProvider({ team });
     expect(withTeams.team?.isTeammateSpawnCall('Agent', {})).toBe(true);
+  });
+  it('uses the SAME pattern as an action id, so the two cannot drift again', () => {
+    // This file's comment and actions.ts's comment both said they were the same
+    // rule. They were not: the provider pattern allowed a hyphen in a later
+    // segment and the action pattern did not, so 'vendor.some-cli' was a valid
+    // provider and an invalid action — and a test on either side alone would
+    // have passed.
+    expect(HOOK_PROVIDER_ID_PATTERN).toBe(NAMESPACED_ID_PATTERN);
   });
 });
