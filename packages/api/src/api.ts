@@ -65,7 +65,8 @@ export interface Observer {
 
 export interface ApplicationApi {
   /**
-   * Every method is async, including the two that could be synchronous.
+   * The four that do work are async, including the two that could be
+   * synchronous. `observe` is the exception and says so on its own.
    *
    * discover and search were declared sync because the first implementation
    * held the object in the same heap. That made the interface un-implementable
@@ -85,23 +86,26 @@ export interface ApplicationApi {
    * Run a registered action.
    *
    * The id is the generated union rather than `string`, so a misspelled one is
-   * a compile error instead of a runtime surprise. The payloads are still
-   * `unknown`: each feature has to declare its own input and output shapes
-   * before those can be checked too, and pretending otherwise would be a
-   * guarantee the code does not give.
+   * a compile error instead of a runtime surprise. A caller holding a string
+   * that is only known at runtime narrows it FIRST with `isRegisteredActionId`
+   * from the protocol package and calls this like any other — which is why
+   * there is no second, string-taking overload. One accepting `string` would
+   * resolve every bogus-id call through it, and the guarantee would stop
+   * existing with nothing failing to build.
+   *
+   * The payload is still `unknown` in both directions: each feature has to
+   * declare its own input and output shapes before those can be checked too,
+   * and pretending otherwise would be a guarantee the code does not give.
    */
   act<I>(action: RegisteredActionId, input: I): Promise<unknown>;
   /**
-   * Run a registered action.
+   * The one method that is not async, and deliberately so.
    *
-   * The id is the generated union, so a misspelled one is a compile error. A
-   * caller holding a string that is only known at runtime narrows it FIRST with
-   * `isRegisteredActionId` from the protocol package and calls this like any
-   * other — which is why there is no second, string-taking method. An overload
-   * accepting any string would resolve every bogus-id call through it, and the
-   * guarantee would stop existing with nothing failing to build.
+   * There is no work here to await: it registers a listener and hands back the
+   * handle that stops it. Returning `Promise<Observer>` would mean every
+   * surface awaited a value it already had synchronously, and the handle is
+   * only useful if the caller can hold it and close it whenever it likes.
    */
-  act<I>(action: RegisteredActionId, input: I): Promise<unknown>;
   observe(query: ObserveQuery, listener: (event: unknown) => void): Observer;
 }
 

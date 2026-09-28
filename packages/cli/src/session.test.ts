@@ -1,4 +1,4 @@
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -84,5 +84,20 @@ describe('the stored session', () => {
     expect(() => {
       clearSession(path);
     }).not.toThrow();
+  });
+  it('FAILS when the session file cannot be written, rather than claiming a logout', () => {
+    // A bearer token left on disk while the CLI reports you logged out is the
+    // wrong KIND of success: the person stops believing the message, and the next
+    // time it is right they stop acting on it too. Only ENOENT means 'there was
+    // nothing here' — a file that cannot be written still holds the token.
+    //
+    // A directory where the file should be makes the write fail as EISDIR on
+    // every platform, which a chmod does not: Windows ignores the mode bits for
+    // a process that owns the file, so a test written with chmod passes there and
+    // never exercises the branch it was written for.
+    const asDirectory = join(mkdtempSync(join(tmpdir(), 'agent-battle-')), 'session.json');
+    mkdirSync(asDirectory, { recursive: true });
+
+    expect(() => clearSession(asDirectory)).toThrow();
   });
 });

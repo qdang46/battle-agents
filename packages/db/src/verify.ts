@@ -33,56 +33,6 @@ const REQUIRED_MONEY_COLUMNS: readonly string[] = [
 const EVENTS_SEQUENCE_TABLE = 'event_log';
 const EVENT_LOG_PROBE_TYPE = 'verify.probe';
 const EVENT_LOG_PROBE_ACTOR = 'verify';
-// The tables section 21 creates. Checked by the migrations stage before any
-// seed exists, which is the one moment the presence of a table is the question.
-const EXPECTED_PLATFORM_TABLES: readonly string[] = [
-  // Better Auth's four, checked alongside ours because they migrate together
-  // and a missing one means the login tables were never created.
-  'user',
-  'session',
-  'account',
-  'verification',
-  'users',
-  'installations',
-  'agents',
-  'projects',
-  'agent_credentials',
-  'sessions',
-  'quests',
-  'bounties',
-  'bounty_funds',
-  'payout_intents',
-  'battles',
-  'battle_participants',
-  'agent_stats',
-  'achievements',
-  'messages',
-  // ba-feature-guild-5g6. Six tables for teams, treasury and guild quests, and
-  // the one that matters most is the treasury ledger: a guild with a table
-  // missing here is a guild whose balance cannot be derived at all, because the
-  // balance IS a sum over those rows.
-  'guilds',
-  'guild_members',
-  'guild_work_log',
-  'guild_treasury_entries',
-  'guild_quests',
-  'guild_role_signals',
-  'event_log',
-  // The per-feature state slices the frozen Extension API promises. A missing
-  // one means every feature that keeps state throws on the first read, and the
-  // feature's own tests pass because they use the in-memory store — the same
-  // "green while checking the wrong store" failure the whole list exists for.
-  'feature_state',
-  // Checked here for the same reason as the rest: drizzle keeps its ledger in a
-  // separate schema, so `db:migrate` reporting success is not evidence this
-  // table exists. AGENTS.md calls that out, and this list is where the
-  // migrations stage finds out it was wrong.
-  'github_delivery_claims',
-  // The dedup ledger behind "an outcome is counted once". A row missing from it
-  // means every duplicate delivery counts again, and nothing above the storage
-  // layer would say so.
-  'reputation_outcomes',
-];
 
 export class SchemaVerificationError extends Error {
   constructor(failures: readonly string[]) {
@@ -698,7 +648,19 @@ async function verifyTablesExist(database: Database): Promise<readonly string[]>
     sql`SELECT table_name FROM information_schema.tables WHERE table_schema = ${PUBLIC_SCHEMA}`,
   );
   const present = new Set(result.rows.map((row: { table_name: string }) => row.table_name));
-  return EXPECTED_PLATFORM_TABLES.filter((table) => !present.has(table)).map(
+  // `OWNED_TABLES` rather than a list written out here, and this is the one
+  // place that difference showed up as a hole in the gate.
+  //
+  // The list this used to name thirty of the thirty-two tables in
+  // `OWNED_TABLES` and never heard of `agent_reputation` or `agent_bases`, both
+  // of which their feature migrations create. Dropping either one left this
+  // reporting "Migrated tables are present" — the stage whose whole job is
+  // proving the migration applied was the stage that had the hole, which is the
+  // failure AGENTS.md names when it warns that a migration reporting success is
+  // not proof. A second list was never going to stay current: the drift was
+  // silent, and `pnpm db:seed` is what noticed the previous one, long after it
+  // landed.
+  return OWNED_TABLES.filter((table) => !present.has(table)).map(
     (table) => `table "${table}" does not exist, so the migration did not apply`,
   );
 }

@@ -324,12 +324,8 @@ export class SpriteCache {
   ): readonly Texture[] | undefined {
     const assets = this.#assets;
     if (assets === undefined || assets.heroes.length === 0) return undefined;
-    let hash = 0;
-    for (const character of agentId) {
-      hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-    }
     const size = assets.heroes.length;
-    const hero = assets.heroes[((hash % size) + size) % size];
+    const hero = assets.heroes[stableIndex(agentId, size)];
     if (hero === undefined) return undefined;
     // Walking outranks working, matching the order in `PixiWorldView.animate`.
     // A character crossing the map playing `work` slides through it, which is
@@ -362,4 +358,32 @@ export function spriteCache(): SpriteCache {
 export function resetSpriteCache(): void {
   sharedCache?.destroy();
   sharedCache = undefined;
+}
+
+/**
+ * A stable 31-multiplier hash of an id.
+ *
+ * ONE function, because a character's colour and a character's face are chosen
+ * by the same rule and must never disagree: the same agent that is red on one
+ * draw has to be the same hero on the next. This arithmetic existed twice — in
+ * the cache and in the view — and two copies of a hash is two chances for one
+ * of them to be edited.
+ *
+ * Stable means stable: it must not change between builds, or every character in
+ * the world changes appearance on a deploy. The multiplier and the `>>> 0` are
+ * therefore fixed, and the test beside this pins a value rather than asserting
+ * "deterministic", which a broken hash still satisfies.
+ */
+export function stableHash(id: string): number {
+  let hash = 0;
+  for (const character of id) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return hash;
+}
+
+/** An index into a list of `size`, for a given id. Stable per id. */
+export function stableIndex(id: string, size: number): number {
+  if (size <= 0) return 0;
+  return stableHash(id) % size;
 }

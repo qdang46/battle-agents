@@ -22,6 +22,7 @@ import { Container, Graphics, Sprite } from 'pixi.js';
 
 import { ZONE_PLACEMENT, placementFor } from '../zones.js';
 import { advanceMotion, motionAt, type CharacterMotion } from './motion.js';
+import { stableHash } from '../sprites/sprite-factory.js';
 import { skyTint } from './sky.js';
 import { zoneSlot } from './zone-slot.js';
 import { wanderOffset } from './idle-wander.js';
@@ -168,11 +169,7 @@ const FRAME_MS = 140;
  * colours.
  */
 function paletteIndexFor(agentId: string): number {
-  let hash = 0;
-  for (const character of agentId) {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  }
-  return hash;
+  return stableHash(agentId);
 }
 
 export interface PixiViewOptions {

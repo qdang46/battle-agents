@@ -93,11 +93,37 @@ export function writeSession(session: StoredSession, path = sessionPath()): void
   chmodSync(path, FILE_MODE);
 }
 
-/** Removes the stored session. Absent is not an error: logging out twice is fine. */
+/**
+ * Removes the stored session.
+ *
+ * Only "there was nothing there" is swallowed, and the distinction is the whole
+ * point of this function.
+ *
+ * The previous version caught everything and wrote `{}` regardless of why the
+ * write failed. `ENOENT` — no session file — really is the same end state, and
+ * logging out twice must not be an error. But `EACCES` on a file this process
+ * cannot write, a full disk, a read-only mount: those leave the bearer token
+ * sitting on disk while the caller reports success. A logout that says it worked
+ * and did not is worse than a logout that fails, because the person stops
+ * believing the message the next time it is right.
+ *
+ * So the absence is tolerated and everything else is re-thrown with the cause
+ * intact.
+ */
 export function clearSession(path = sessionPath()): void {
   try {
     writeFileSync(path, '{}\n', { mode: FILE_MODE });
-  } catch {
-    // Nothing to clear is the same end state.
+  } catch (error) {
+    if (!isAbsent(error)) throw error;
   }
+}
+
+/** Whether a filesystem error means "there was nothing there". */
+function isAbsent(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { readonly code?: unknown }).code === 'ENOENT'
+  );
 }

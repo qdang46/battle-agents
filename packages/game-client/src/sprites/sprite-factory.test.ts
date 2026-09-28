@@ -7,6 +7,8 @@ import {
   SpriteCache,
   TILE_SOURCE_PX,
   TILE_WORLD_PX,
+  stableHash,
+  stableIndex,
   spriteCache,
   spriteKey,
 } from './sprite-factory.js';
@@ -122,5 +124,19 @@ describe('the texture a sprite is built from', () => {
     const texture = spriteCache().get(spriteKey('agent', 1));
 
     expect(texture.source.format).toBe('rgba8unorm');
+  });
+  it('pins the hash to VALUES, not merely to being deterministic', () => {
+    // A character's colour and a character's face come from this one function,
+    // so a change to it silently restyles every character in the world. Asserting
+    // 'the same input gives the same output' is satisfied by a hash that returns
+    // 0 for everything, so these are the actual numbers.
+    expect(stableHash('')).toBe(0);
+    expect(stableHash('a')).toBe(97);
+    expect(stableHash('agent-1')).toBe(stableHash('agent-1'));
+    expect(stableHash('agent-1')).not.toBe(stableHash('agent-2'));
+    expect(stableIndex('agent-1', 8)).toBeGreaterThanOrEqual(0);
+    expect(stableIndex('agent-1', 8)).toBeLessThan(8);
+    // Zero is a real list size here, and it must not divide by zero.
+    expect(stableIndex('agent-1', 0)).toBe(0);
   });
 });
