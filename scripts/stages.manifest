@@ -50,5 +50,11 @@ docs
 watchlist-claims
 pooled-driver
 asset-licenses
+# `game-first` is the doctrine check from docs/design/game-first-doctrine.md, and it
+# is a stage rather than a note because every rule it enforces was already broken
+# here in a way that read as normal: a route per scene under a shared dashboard
+# layout, and 3,436 licensed art files on disk that no code loaded. Both passed the
+# entire suite. A doctrine nothing checks is a preference.
+game-first
 license
 e2e-smoke

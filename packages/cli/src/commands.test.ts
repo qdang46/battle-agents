@@ -27,7 +27,7 @@ function api() {
             defineAction({
               id: 'quest.claim',
               permissions: ['quest.claim'],
-              run: async (input: { args: string }) => ({ claimed: input.args }),
+              run: async (input: { questId: string }) => ({ claimed: input.questId }),
             }),
             defineAction({
               // Three segments on purpose. The registry pattern allows them, and
@@ -36,12 +36,12 @@ function api() {
               // nothing, while the action the caller asked for sits there.
               id: 'quest.admin.revoke',
               permissions: ['quest.admin.revoke'],
-              run: async (input: { args: string }) => ({ revoked: input.args }),
+              run: async (input: { questId: string }) => ({ revoked: input.questId }),
             }),
             defineAction({
               id: 'quest.submit',
               permissions: ['quest.submit'],
-              run: async (input: { args: string }) => ({ submitted: input.args }),
+              run: async (input: { questId: string; prUrl: string }) => ({ submitted: input.prUrl }),
             }),
           ],
         },
@@ -56,7 +56,7 @@ function api() {
             defineAction({
               id: 'reputation.read',
               permissions: ['reputation.read'],
-              run: async (input: { args: string }) => ({ trust: input.args }),
+              run: async (input: { agentId: string }) => ({ trust: input.agentId }),
             }),
           ],
         },
@@ -74,21 +74,21 @@ function invoke(...argv: string[]) {
 
 describe('the CLI reaches every domain it has never heard of', () => {
   it('runs an action from a domain it has no code for', async () => {
-    const result = await invoke('quest', 'claim', 'abc123');
+    const result = await invoke('quest', 'claim', '--questId', 'abc123');
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('claimed: abc123');
   });
 
   it('reaches a second domain with the same three lines', async () => {
-    const result = await invoke('reputation', 'read', 'r-9');
+    const result = await invoke('reputation', 'read', '--agentId', 'r-9');
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('trust: r-9');
   });
 
   it('reaches an action whose id has more than two segments', async () => {
-    const result = await invoke('quest', 'admin.revoke', 'q-9');
+    const result = await invoke('quest', 'admin.revoke', '--questId', 'q-9');
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('revoked: q-9');
@@ -161,14 +161,14 @@ describe('failures a caller can act on', () => {
 
 describe('--json, because an agent drives this too', () => {
   it('returns the same data in a machine form', async () => {
-    const result = await invoke('quest', 'claim', 'abc123', '--json');
+    const result = await invoke('quest', 'claim', '--questId', 'abc123', '--json');
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ claimed: 'abc123' });
   });
 
   it('strips the flag wherever it appears', async () => {
-    const result = await invoke('--json', 'quest', 'claim', 'abc123');
+    const result = await invoke('--json', 'quest', 'claim', '--questId', 'abc123');
 
     expect(JSON.parse(result.stdout)).toEqual({ claimed: 'abc123' });
   });
@@ -252,9 +252,18 @@ describe('the local configuration commands', () => {
     // The assertion is on the message, not on the presence or absence of a
     // session: init is a read, and a read that cannot answer is a read the
     // caller has to guess at. What they need is the next command.
+    //
+    // Which is why this takes EITHER answer. The version it replaces asserted
+    // `/login/`, which is only true on a machine that has never logged in — so
+    // it went red the moment it did, and the fix a person reaches for is to
+    // delete the session rather than to notice that the test was asserting the
+    // machine's history. "Configured" is as useful an answer as "not yet", and
+    // both are answers.
     const result = await invoke('init').catch((error: unknown) => error);
+    const text = JSON.stringify(result);
 
-    expect(JSON.stringify(result)).toMatch(/login/);
+    expect(text).toMatch(/configured: (true|false)/);
+    expect(text).toMatch(/login|serverUrl/);
   });
 
   it('refuses login without both halves, rather than storing half a session', async () => {

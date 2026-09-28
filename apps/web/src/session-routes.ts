@@ -193,19 +193,22 @@ async function create(
   const fields = body as Record<string, unknown>;
   const { agentName, harness } = fields;
   const projectKey = fields['projectKey'];
+  const harnessSessionRef = fields['harnessSessionRef'];
   if (
     typeof agentName !== 'string' ||
     agentName.trim() === '' ||
     typeof harness !== 'string' ||
     harness.trim() === '' ||
-    (projectKey !== undefined && (typeof projectKey !== 'string' || projectKey.trim() === ''))
+    (projectKey !== undefined && (typeof projectKey !== 'string' || projectKey.trim() === '')) ||
+    (harnessSessionRef !== undefined &&
+      (typeof harnessSessionRef !== 'string' || harnessSessionRef.trim() === ''))
   ) {
     return {
       status: 400,
       body: {
         error:
           'body must carry a non-empty agentName and harness string, ' +
-          'and a projectKey string if it carries one at all',
+          'and a projectKey or harnessSessionRef string if it carries one at all',
       },
     };
   }
@@ -236,6 +239,12 @@ async function create(
       agentName,
       harness,
       ...(projectKey === undefined ? {} : { projectKey }),
+      // The id this HARNESS calls the run, when the client knows one. A Claude
+      // Code adapter has it — the transcript filename — and without it every
+      // batch that adapter posts is refused with `no such session`, because the
+      // platform's id comes from the database and can never be that filename.
+      // See `CreateSessionInput.harnessSessionRef`.
+      ...(harnessSessionRef === undefined ? {} : { harnessSessionRef }),
     }),
   };
 }

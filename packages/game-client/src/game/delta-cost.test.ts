@@ -13,6 +13,7 @@ import {
 import { TILE_WORLD_PX } from '../sprites/sprite-factory.js';
 import { topdown } from './projection.js';
 import { SpriteCache } from '../sprites/sprite-factory.js';
+import { CITY } from '../scenes/scene-config.js';
 
 /**
  * The delta path is O(changes), not O(scene).
@@ -292,7 +293,7 @@ describe('the frame budget', () => {
     const { store, view } = scene(AGENT_COUNT);
     const projection = topdown(TILE_WORLD_PX);
     const cache = new SpriteCache();
-    const pixiView = new PixiWorldView({ store, projection, cache });
+    const pixiView = new PixiWorldView({ store, scene: CITY, projection, cache });
     pixiView.rebuild();
 
     // Tools with four DIFFERENT zones, so changing tool is changing zone.
@@ -371,7 +372,7 @@ describe('the frame budget', () => {
     // nodes touched rather than milliseconds. This test only pins the ceiling.
     const { store } = scene(AGENT_COUNT);
     const projection = topdown(TILE_WORLD_PX);
-    const pixiView = new PixiWorldView({ store, projection, cache: new SpriteCache() });
+    const pixiView = new PixiWorldView({ store, scene: CITY, projection, cache: new SpriteCache() });
     pixiView.rebuild();
 
     const iterations = 500;

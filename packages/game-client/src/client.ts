@@ -27,6 +27,7 @@ import { WorldStore, type WorldSnapshot } from './state/store.js';
 import { FrameLoop, type FrameRenderer } from './game/frame-loop.js';
 import { PixiWorldView, type WorldViewLike } from './game/view.js';
 import { spriteCache, type SpriteCache } from './sprites/sprite-factory.js';
+import { CITY, type SceneConfig } from './scenes/scene-config.js';
 
 /** The default SSE endpoint. Relative, because the client is same-origin. */
 export const DEFAULT_STREAM_URL = '/api/events/stream';
@@ -34,6 +35,18 @@ export const DEFAULT_STREAM_URL = '/api/events/stream';
 export interface GameClientOptions {
   /** Any view; defaults to the Pixi one. A counting view is the test seam. */
   readonly view?: WorldViewLike;
+  /**
+   * Which scene the DEFAULT view draws. Read only when no `view` is supplied,
+   * because a supplied view was built over a scene already and asking for
+   * another here would be a second opinion nobody acts on.
+   *
+   * Defaults to the city because that is what this package was built as, and a
+   * client with no view and no scene is a client that only ever showed the
+   * Coding City. Every real host passes a scene: `/city`, `/arena` and
+   * `/guild-hall` all build their own view, because a view is what a scene
+   * config is FOR.
+   */
+  readonly scene?: SceneConfig;
   readonly cache?: SpriteCache;
   /** The endpoint to stream from. */
   readonly url?: string;
@@ -74,16 +87,20 @@ export class GameClient implements FrameRenderer {
    * here because the view has to exist before the client that renders it.
    */
   readonly store: WorldStore;
-  readonly view: WorldViewLike;
+  #view: WorldViewLike;
   readonly #loop: FrameLoop;
   readonly #unsubscribe: () => void;
   #stream: StreamClient | undefined;
 
   constructor(options: GameClientOptions = {}) {
     this.store = options.store ?? new WorldStore();
-    this.view =
+    this.#view =
       options.view ??
-      new PixiWorldView({ store: this.store, cache: options.cache ?? spriteCache() });
+      new PixiWorldView({
+        store: this.store,
+        scene: options.scene ?? CITY,
+        cache: options.cache ?? spriteCache(),
+      });
 
     // Spread rather than `key: value` pairs, because the base config sets
     // `exactOptionalPropertyTypes` and a present-but-undefined optional is a
@@ -109,8 +126,27 @@ export class GameClient implements FrameRenderer {
     }
   }
 
-  /** Opens the SSE stream. Throws if no source factory was supplied. */
-  connect(): void {
+  /**
+   * Points the client at a different view over the SAME store.
+   *
+   * Exists so switching scenes is a camera move rather than a page load. A view
+   * is built per scene because the scene decides which zones exist and how big
+   * the grid is; the store, the client and the SSE connection are not per scene,
+   * and rebuilding those to change the map would drop every character and the
+   * stream with them.
+   *
+   * The store is not a parameter because it must not change: a view over a
+   * different store is the silent empty-world failure, and making the caller pass
+   * it back in would be an invitation.
+   */
+  rebindView(view: WorldViewLike): void {
+    this.#view = view;
+    // The new view starts empty, so it is told what already exists rather than
+    // waiting for a delta that may not come for another minute.
+    this.#view.rebuild();
+  }
+
+  /** Opens the SSE stream. Throws if no source factory was supplied. */  connect(): void {
     if (this.#stream === undefined) {
       throw new Error(
         'GameClient.connect() needs a createSource factory; construct with one to stream.',
@@ -127,6 +163,18 @@ export class GameClient implements FrameRenderer {
   stop(): void {
     this.#loop.stop();
     this.#stream?.close();
+  }
+
+  /**
+   * The view in use right now.
+   *
+   * A getter rather than a public field, because `rebindView` REPLACES it. A
+   * public field would be two ways to say the same thing, and one of them would
+   * quietly stop working the first time the other was used. Read it; the only
+   * way to change it is `rebindView`.
+   */
+  get view(): WorldViewLike {
+    return this.#view;
   }
 
   /** Unsubscribes everything. For teardown and for tests. */
@@ -147,15 +195,38 @@ export class GameClient implements FrameRenderer {
   /* ── FrameRenderer: called by the loop, once per frame ── */
 
   render(agentIds: readonly string[]): void {
-    this.view.applyAgentDelta(agentIds);
+    this.#view.applyAgentDelta(agentIds);
   }
 
   resync(): void {
     // The stream is untrustworthy, so the store stops accepting deltas and the
     // next snapshot rebuilds. The view is NOT swept here: the store is the
     // authority on who exists, and it will tell us on the next hydrate.
+    //
+    // THE ORDER IS THE WHOLE FIX. `store.invalidate()` PUBLISHES a resync, and
+    // this client is subscribed to the store's channel, so the call that is
+    // supposed to be acting on a resync re-requests one — synchronously, inside
+    // itself. The loop then set its flag, called this, the flag got set again,
+    // and every frame after that took the resync branch and drained nothing. The
+    // game rendered a frozen world with a clean status line beside it.
+    //
+    // The sweep is a VIEW operation and is done first, while the store is still
+    // considered in sync; the store is invalidated last, so the publication
+    // happens after this call has finished what it was called to do.
+    this.#view.sweep();
     this.store.invalidate();
-    this.view.sweep();
+  }
+
+  /**
+   * Advances the animation, when the view has one.
+   *
+   * Delegated rather than implemented so a counting view — the test seam, and
+   * the thing that proves the O(changes) property — is not made to carry an
+   * animation it has no art for. The optional call is what the loop already
+   * does, so a view without one simply does not move.
+   */
+  animate(elapsedMs: number): void {
+    this.#view.animate?.(elapsedMs);
   }
 
   #handlers(): StreamHandlers {
@@ -164,7 +235,7 @@ export class GameClient implements FrameRenderer {
         this.store.hydrate(snapshot);
         // A snapshot is authoritative and may contradict every delta since the
         // last one, so it is a rebuild rather than a merge.
-        this.view.rebuild();
+        this.#view.rebuild();
       },
       onDelta: (event: GameEvent) => {
         this.store.applyDelta(event);

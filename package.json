@@ -11,7 +11,13 @@
   "scripts": {
     "architecture": "tsx scripts/check-architecture.ts",
     "build": "tsc -b tsconfig.build.json",
+    "check:adapter-boundary": "bash scripts/check-adapter-boundary.sh",
+    "check:assets": "bash scripts/check-assets.sh",
+    "check:docs": "bash scripts/check-docs.sh",
+    "check:game-first": "bash scripts/check-game-first.sh",
     "check:moltbook": "bash scripts/check-moltbook-claims.sh",
+    "check:pooled-driver": "bash scripts/check-pooled-driver.sh",
+    "check:watchlist": "bash scripts/check-watchlist-claims.sh",
     "codegen": "tsx scripts/generate-action-ids.ts",
     "codegen:check": "bash scripts/check-codegen-fresh.sh",
     "db:generate": "drizzle-kit generate --config=packages/db/drizzle.config.ts",
@@ -20,8 +26,8 @@
     "db:verify": "tsx packages/db/src/verify.ts",
     "format": "prettier --write .",
     "license-check": "bash scripts/check-licenses.sh",
-    "load:events": "tsx scripts/load-test-events.ts",
     "lint": "prettier --check .",
+    "load:events": "tsx scripts/load-test-events.ts",
     "removal-test": "bash scripts/removal-test.sh",
     "schema-hygiene": "bash scripts/check-schema-hygiene.sh",
     "test": "pnpm run test:unit",
@@ -29,12 +35,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:m0": "bash scripts/test-m0.sh",
     "test:unit": "vitest run --config vitest.unit.config.ts",
-    "typecheck": "tsc -b tsconfig.build.json && tsc -p tsconfig.json",
-    "check:docs": "bash scripts/check-docs.sh",
-    "check:pooled-driver": "bash scripts/check-pooled-driver.sh",
-    "check:adapter-boundary": "bash scripts/check-adapter-boundary.sh",
-    "check:watchlist": "bash scripts/check-watchlist-claims.sh",
-    "check:assets": "bash scripts/check-assets.sh"
+    "typecheck": "tsc -b tsconfig.build.json && tsc -p tsconfig.json"
   },
   "devDependencies": {
     "@battle-agents/activity": "workspace:*",

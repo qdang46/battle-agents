@@ -68,6 +68,20 @@ export interface FrameRenderer {
   render(agentIds: readonly string[]): void;
   /** Called when the loop has decided the delta stream is untrustworthy. */
   resync(): void;
+  /**
+   * Advances anything that moves on its own, every frame.
+   *
+   * Optional, and the reason it is not `render` is the whole point: `render`
+   * only runs when a delta arrived, so a character animating through it freezes
+   * between events — which, for a game whose characters spend most of their time
+   * reading a file and not touching anything, is a character that stands still
+   * almost always. This runs on EVERY frame, including the frames where nothing
+   * changed, and is the one place in the loop that is allowed to be O(scene).
+   *
+   * `elapsedMs` is measured, not assumed, and is injected with the scheduler so
+   * a test drives animation by advancing a clock rather than by sleeping.
+   */
+  animate?(elapsedMs: number): void;
 }
 
 export interface FrameLoopOptions {
@@ -77,6 +91,14 @@ export interface FrameLoopOptions {
    * a frame is a function call rather than a timer.
    */
   readonly schedule?: (callback: () => void) => void;
+  /**
+   * The clock animation is measured against.
+   *
+   * Injected beside the scheduler for the same reason: a test that has to sleep
+   * to advance an animation is a test that is slow when it passes and flaky
+   * when it does not.
+   */
+  readonly now?: () => number;
 }
 
 /**
@@ -97,13 +119,16 @@ export class FrameLoop {
   readonly #renderer: FrameRenderer;
   readonly #schedule: (callback: () => void) => void;
   readonly #pending = new Set<string>();
+  readonly #now: () => number;
   #resyncRequested = false;
   #frames = 0;
   #overflows = 0;
   #running = false;
+  #lastFrameAt = 0;
 
   constructor(options: FrameLoopOptions) {
     this.#renderer = options.renderer;
+    this.#now = options.now ?? ((): number => performance.now());
     this.#schedule =
       options.schedule ??
       ((callback) => {
@@ -141,10 +166,35 @@ export class FrameLoop {
   frame(): { readonly rendered: number; readonly resynced: boolean } {
     this.#frames += 1;
 
+    // Measured before the early returns on purpose. Every path out of this
+    // method has to advance the animation, including the "nothing changed" one:
+    // that is the path a character spends its life on, and a frame that returns
+    // early without it is a character frozen solid for want of an event.
+    const at = this.#now();
+    const elapsed = Math.max(0, at - this.#lastFrameAt);
+    this.#lastFrameAt = at;
+    const advance = (): void => {
+      this.#renderer.animate?.(elapsed);
+    };
+
     if (this.#resyncRequested) {
-      this.#resyncRequested = false;
       this.#pending.clear();
       this.#renderer.resync();
+      // The flag is cleared AFTER the renderer runs, not before.
+      //
+      // `GameClient.resync()` calls `store.invalidate()`, which PUBLISHES a
+      // resync on the store channel, and this loop is subscribed to that
+      // channel. Clearing first meant the renderer's own publication re-set the
+      // flag it had just cleared, so the next frame took this branch again — and
+      // again, every frame, forever. The world rendered frozen, the status said
+      // `streaming`, and nothing was red: the loop was doing exactly what it was
+      // told, by a contract that had become self-referential.
+      //
+      // Clearing last makes the cycle impossible: a resync requested DURING the
+      // resync is a real new event (a reconnect arriving mid-rebuild) and is
+      // honoured on the next frame, which is the correct reading of it.
+      this.#resyncRequested = false;
+      advance();
       return { rendered: 0, resynced: true };
     }
 
@@ -155,16 +205,21 @@ export class FrameLoop {
       this.#overflows += 1;
       this.#pending.clear();
       this.#renderer.resync();
+      advance();
       return { rendered: 0, resynced: true };
     }
 
-    if (this.#pending.size === 0) return { rendered: 0, resynced: false };
+    if (this.#pending.size === 0) {
+      advance();
+      return { rendered: 0, resynced: false };
+    }
 
     // Snapshot-and-clear before rendering, so a renderer that ingests more
     // changes does not mutate the set being iterated.
     const batch = [...this.#pending];
     this.#pending.clear();
     this.#renderer.render(batch);
+    advance();
     return { rendered: batch.length, resynced: false };
   }
 

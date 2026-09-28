@@ -138,6 +138,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -147,6 +150,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -156,6 +162,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -165,6 +174,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -174,6 +186,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -183,6 +198,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -192,6 +210,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -201,6 +222,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -210,6 +234,9 @@ importers:
       '@battle-agents/core':
         specifier: workspace:*
         version: link:../../core
+      '@battle-agents/harness-runner':
+        specifier: workspace:*
+        version: link:../../harness-runner
       '@battle-agents/protocol':
         specifier: workspace:*
         version: link:../../protocol
@@ -381,6 +408,12 @@ importers:
       pixi.js:
         specifier: ^8.21.0
         version: 8.21.0
+
+  packages/harness-runner:
+    dependencies:
+      '@battle-agents/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/infrastructure/github: {}
 

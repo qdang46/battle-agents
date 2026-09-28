@@ -85,9 +85,19 @@ the row exists so the claim in the parser header can be checked against a named 
 | `apps/web/public/` protocol docs                   | `moltbook` skill/heartbeat/messaging docs (shape only; `events.md` is ours)                                        | `dd452e852de3` | MIT        |
 | `packages/adapters/aider/src/parsers/transcript.ts`   | `aider-chat 0.86.2` line grammar, read from `io.py`, `commands.py` and `coders/base_coder.py`. No code copied.        | `f38a9d322f56` | Apache-2.0 |
 | `apps/web/src/` SSE delta protocol                 | `agent-world-codemoo/server/{stateDiffBroadcast,eventsPipeline}.js`                                                | `851ceee1d3f6` | MIT        |
+| `apps/web/public/art/age-of-agents/`               | `age-of-agents/packages/client/public/assets/{fantasy,scifi,emblems}` — sprites AND their TexturePacker frame manifests | `a6f22316e36b` | MIT        |
 
 ## Asset licenses
 
 Game art is licensed separately from the MIT code. Each pack under
 `apps/web/public/assets/<pack>/` keeps its own `LICENSE.txt` beside the files it covers, and the
 shortlist that selects a pack records the pack's license before it is merged.
+
+**`age-of-agents` ships its art under its own MIT LICENSE, and that is why this row is here
+rather than only in the code table.** The `age-of-agents` row above covers the client skeleton
+this repository mirrored; this one covers the files copied into
+`apps/web/public/art/age-of-agents/`, which is plan §28.1 item 6 — the `fantasy` and `scifi`
+packs as placeholder themes, kept with their TexturePacker `.json` frame manifests so a frame
+is looked up rather than guessed. The upstream `LICENSE` is copied alongside them, and the
+sprites are the reference implementation's own art rather than a re-derivation, so the
+attribution travels with the pixels.

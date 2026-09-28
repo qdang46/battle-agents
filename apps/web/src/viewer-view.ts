@@ -1,4 +1,5 @@
 import { sharedAuth, MissingAuthConfigurationError } from './auth/server.js';
+import { DEV_LOGIN_NAME, devLoginEnabled, devLoginRefusal } from './auth/dev-login.js';
 
 /**
  * Who is looking, as far as this page is concerned.
@@ -36,7 +37,18 @@ import { sharedAuth, MissingAuthConfigurationError } from './auth/server.js';
 export type Viewer =
   | { readonly kind: 'signed-out' }
   | { readonly kind: 'auth-unconfigured'; readonly missing: readonly string[] }
-  | { readonly kind: 'signed-in'; readonly login: string | null };
+  | { readonly kind: 'signed-in'; readonly login: string | null }
+  /**
+   * Signed in by the local development bypass rather than by GitHub.
+   *
+   * A FOURTH answer, added because the three above cannot express "you are
+   * looking at a development build with no OAuth app behind it". Folding it into
+   * `signed-in` would make a screen pass its gate silently, and the one thing
+   * this repository's gate exists to prevent is a screen that renders without
+   * anybody having decided it should. So the state is distinct, the chrome says
+   * so, and no code has to remember to check.
+   */
+  | { readonly kind: 'dev-login'; readonly login: string };
 
 /**
  * The signed-in human, or the state that explains why there is not one.
@@ -47,6 +59,14 @@ export type Viewer =
  * `Headers` and the page stays the only place that knows about a request.
  */
 export async function resolveViewer(requestHeaders: Headers): Promise<Viewer> {
+  // Before the auth server, and before its configuration is read, so a developer
+  // with no OAuth app gets the product rather than the setup instructions. The
+  // refusal below keeps a set-but-ineffective flag from being silent.
+  if (devLoginEnabled(process.env)) {
+    reportDevLoginRefusal();
+    return { kind: 'dev-login', login: DEV_LOGIN_NAME };
+  }
+
   let auth: ReturnType<typeof sharedAuth>;
   try {
     auth = sharedAuth();
@@ -88,9 +108,29 @@ function githubLogin(user: { readonly name?: unknown; readonly email?: unknown }
  */
 export function viewerMayRead(
   viewer: Viewer,
-): viewer is Extract<Viewer, { readonly kind: 'signed-in' }> {
-  return viewer.kind === 'signed-in';
+): viewer is Extract<Viewer, { readonly kind: 'signed-in' } | { readonly kind: 'dev-login' }> {
+  return viewer.kind === 'signed-in' || viewer.kind === 'dev-login';
 }
 
 /** The path a signed-out visitor is sent to. */
 export const SIGN_IN_PATH = '/api/auth/sign-in/social';
+
+/**
+ * Says once, loudly, that a flag was set and did nothing.
+ *
+ * `warn` rather than `error` and rather than a throw, because the correct
+ * behaviour of a production process with this flag set is to behave exactly as
+ * it would without it. A developer who set `AGENT_BATTLE_DEV_LOGIN=true` on a
+ * `next start` and found the gate still closed has one of two things to fix —
+ * the value, or the environment — and this names both. The module-level `let`
+ * makes it once per process rather than once per page render.
+ */
+let devLoginRefusalReported = false;
+
+function reportDevLoginRefusal(): void {
+  if (devLoginRefusalReported) return;
+  const reason = devLoginRefusal(process.env);
+  if (reason === undefined) return;
+  devLoginRefusalReported = true;
+  process.stderr.write(`[auth] ${reason}\n`);
+}

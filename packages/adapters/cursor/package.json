@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@battle-agents/core": "workspace:*",
+    "@battle-agents/harness-runner": "workspace:*",
     "@battle-agents/protocol": "workspace:*"
   }
 }

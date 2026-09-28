@@ -60,6 +60,7 @@ readonly CANONICAL_STAGES=(
   watchlist-claims
   pooled-driver
   asset-licenses
+  game-first
   license
   e2e-smoke
 )
@@ -96,6 +97,10 @@ readonly OWNER_MOLTBOOK="ba-moltbook-verification-0zc"
 readonly OWNER_DOCS="ba-contributor-onboarding-tc9"
 readonly OWNER_WATCHLIST="ba-watchlist-space-molt-5v4"
 readonly OWNER_ASSETS="ba-asset-shortlist-x2a"
+# Owned by the same bead as the doctrine it enforces: an art pack that no code
+# loads and a screen that is not a game are the same class of defect — something
+# built, attributed, shipped, and unused.
+readonly OWNER_GAME_FIRST="ba-asset-shortlist-x2a"
 readonly OWNER_POOLED_DRIVER="ba-neon-cloud-deploy-zn4"
 readonly OWNER_ADAPTER_BOUNDARY="ba-third-party-adapter-proof-2wp"
 readonly OWNER_WEB="ba-web-ui-surface-t3w"
@@ -701,6 +706,15 @@ run_stage_adapter_boundary() {
   run_delegated adapter-boundary "$OWNER_ADAPTER_BOUNDARY" script:check:adapter-boundary
 }
 
+run_stage_game_first() {
+  # The doctrine in docs/design/game-first-doctrine.md, checked. It is a stage
+  # because the two rules it enforces were both violated here while the entire
+  # suite stayed green: the game was a 460px panel inside a dashboard reached by
+  # a tab, and 3,436 licensed art files sat on disk that no code loaded. A
+  # doctrine with nothing checking it is a preference with good formatting.
+  run_delegated game-first "$OWNER_GAME_FIRST" script:check:game-first
+}
+
 run_stage_asset_licenses() {
   # Per-pack asset licences, separate from the vendored SOURCE licences
   # check-licenses.sh covers. An asset pack is third-party art with its own
@@ -745,6 +759,7 @@ run_stage() {
     watchlist-claims) run_stage_watchlist_claims ;;
     pooled-driver) run_stage_pooled_driver ;;
     asset-licenses) run_stage_asset_licenses ;;
+    game-first) run_stage_game_first ;;
     license) run_stage_license ;;
     e2e-smoke) run_stage_e2e_smoke ;;
     *) fail "no runner registered for stage '$1'" ;;

@@ -21,7 +21,6 @@ import type { SessionEndReason, SessionStatus } from '../schema/index.js';
 
 export class DrizzleSessionRepository {
   readonly #database: Database;
-
   constructor(database: Database) {
     this.#database = database;
   }
@@ -153,6 +152,17 @@ export class DrizzleSessionRepository {
     installationId: string;
     projectId: string | null;
     now: string;
+    /**
+     * The id the HARNESS uses for this run, when it has one.
+     *
+     * Stored rather than used as the primary key, deliberately: the platform
+     * owns `sessions.id` and does not let a client name a session. What it does
+     * do is remember which of the harness's own runs this is, so `POST /api/
+     * events` — which is addressed by the harness's id, because the adapter
+     * derived it from a filename — can find the row. See
+     * `findOwnedByHarnessRef`.
+     */
+    readonly harnessSessionRef?: string | undefined;
   }): Promise<{ id: string }> {
     const startedAt = new Date(input.now);
     const [created] = await this.#database
@@ -163,9 +173,44 @@ export class DrizzleSessionRepository {
         projectId: input.projectId,
         startedAt,
         lastHeartbeatAt: startedAt,
+        harnessSessionRef: input.harnessSessionRef ?? null,
       })
       .returning({ id: sessions.id });
     return requiredId(created, 'session');
+  }
+
+  /**
+   * Finds a session by the name ITS HARNESS uses, scoped to one installation.
+   *
+   * The second half of the pairing `createSession` starts: an adapter posts
+   * events under the id Claude Code wrote into a filename, and the platform has
+   * to find the row the handshake created for it. Without this the real adapter
+   * is refused with `no such session` on every batch forever, which is what
+   * happens when a column exists, is seeded, and is read by nothing.
+   *
+   * Ownership is in the query for the same reason `findOwnedByInstallation` has
+   * it: a ref is guessable — it is a filename — so a lookup that did not scope
+   * it would let one installation write events into another's run.
+   *
+   * A ref that matches nothing is `undefined`, the same answer as an id that
+   * does not exist, so this cannot be used to discover which harness session ids
+   * are real.
+   */
+  async findOwnedByHarnessRef(
+    harnessSessionRef: string,
+    installationId: string,
+  ): Promise<{ id: string; agentId: string; status: string } | undefined> {
+    const [row] = await this.#database
+      .select({ id: sessions.id, agentId: sessions.agentId, status: sessions.status })
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.harnessSessionRef, harnessSessionRef),
+          eq(sessions.installationId, installationId),
+        ),
+      )
+      .limit(1);
+    return row;
   }
 
   async markSessionActive(sessionId: string, now: string): Promise<void> {
@@ -216,6 +261,52 @@ export class DrizzleSessionSweeper {
 
   constructor(database: Database) {
     this.#database = database;
+  }
+
+  /**
+   * Who is in the world, as CHARACTERS rather than as session ids.
+   *
+   * `findActiveSessions` answers the sweeper's question — which sessions are
+   * alive — and its rows carry no identity, because nothing downstream of the
+   * sweeper needs any. The world view does: a client opening the event stream
+   * gets a `full_state` snapshot, and with session ids alone the game client can
+   * only draw one anonymous figure per session standing in the plaza. Joining to
+   * `agents` here is what lets a character arrive with its name, harness and
+   * level instead of being a placeholder waiting for a delta that may never come.
+   *
+   * A session whose agent row is missing is DROPPED rather than sent with nulls.
+   * That should not happen — the session resolved an agent when it was created —
+   * and if it does, a character with no name is the one figure in the city that
+   * is visibly a lie, so the honest answer is to leave it out.
+   */
+  async findLivePresence(): Promise<
+    readonly {
+      readonly sessionId: string;
+      readonly agentId: string;
+      readonly agentName: string;
+      readonly harness: string;
+      readonly level: number;
+    }[]
+  > {
+    const rows = await this.#database
+      .select({
+        sessionId: sessions.id,
+        agentId: agents.id,
+        agentName: agents.name,
+        harness: agents.harness,
+        level: agents.level,
+      })
+      .from(sessions)
+      .innerJoin(agents, eq(agents.id, sessions.agentId))
+      .where(eq(sessions.status, 'active'));
+
+    return rows.map((row) => ({
+      sessionId: row.sessionId,
+      agentId: row.agentId,
+      agentName: row.agentName,
+      harness: row.harness,
+      level: row.level,
+    }));
   }
 
   async findActiveSessions(): Promise<readonly { id: string; lastHeartbeatAt: string }[]> {

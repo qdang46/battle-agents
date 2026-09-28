@@ -14,17 +14,17 @@ import {
   DrizzleQuestRepository,
   DrizzleReputationRepository,
   DrizzleSessionRepository,
+  DrizzleSessionSweeper,
   DrizzleSocialRepository,
   DrizzleStateStore,
   type Database,
 } from '@battle-agents/db';
-import { PROTOCOL_VERSION } from '@battle-agents/protocol';
 
 import { sharedRuntime } from './shared-runtime.js';
 
 import { readBatchLimits, type BatchLimits } from './event-batch.js';
 import { createEventRoutes } from './event-routes.js';
-import { EventStreamHub, type GameSnapshot } from './event-stream.js';
+import { EventStreamHub, type LiveAgent } from './event-stream.js';
 import { createGameRuntime } from './composition.js';
 import type { HttpRequest, HttpResponse } from './routes.js';
 
@@ -88,6 +88,12 @@ export interface EventGatewayDependencies {
   /** Injectable so a test can pin the clock the token expiry is judged against. */
   readonly now?: () => string;
   readonly maxSubscriberLag?: number;
+  /**
+   * The sessions already running, described well enough to draw. Supplied by the
+   * composition root, which is the only place allowed to read the database; the
+   * hub itself has no store dependency and stays synchronous by design.
+   */
+  readonly liveAgents?: readonly LiveAgent[];
 }
 
 export interface EventGateway {
@@ -133,16 +139,23 @@ export function createEventGateway(dependencies: EventGatewayDependencies): Even
       achievementsRepository: new DrizzleAchievementsRepository(dependencies.database),
     });
 
-  // The snapshot is deliberately synchronous and deliberately empty of live
-  // sessions. Synchronous because the hub takes a subscriber's snapshot and
-  // starts watching it in one non-yielding step, so no event can slip between
-  // "here is the world" and "this client is watching"; an async provider would
-  // reopen exactly that window. Empty of live sessions because there is no
-  // presence registry in this bead, and an empty list is an honest value rather
-  // than a fabricated one.
+  // The snapshot is deliberately synchronous. The hub takes a subscriber's
+  // snapshot and starts watching it in one non-yielding step, so no event can
+  // slip between "here is the world" and "this client is watching"; an async
+  // provider would reopen exactly that window.
+  //
+  // It no longer hardcodes an empty `liveSessionIds`. It did, and that is the
+  // reason the Coding City was empty for anyone who arrived after the last agent
+  // did: `full_state` is what a page is built from, so a literal `[]` told every
+  // visitor that nobody existed and left only the deltas that arrived while they
+  // were watching. Presence now lives in the hub, folded from the lifecycle
+  // events on the bus, and `initialLiveAgents` primes it from durable state so a
+  // restart does not empty the world until the next agent connects.
   const hub = new EventStreamHub({
     bus,
-    snapshot: (): GameSnapshot => ({ protocolVersion: PROTOCOL_VERSION, liveSessionIds: [] }),
+    ...(dependencies.liveAgents === undefined
+      ? {}
+      : { initialLiveAgents: dependencies.liveAgents }),
     ...(dependencies.maxSubscriberLag === undefined
       ? {}
       : { maxSubscriberLag: dependencies.maxSubscriberLag }),
@@ -169,6 +182,8 @@ export function createEventGateway(dependencies: EventGatewayDependencies): Even
     },
     resolveSession: (sessionId, installationId) =>
       sessionRepository.findOwnedByInstallation(sessionId, installationId),
+    resolveSessionByHarnessRef: (harnessSessionRef, installationId) =>
+      sessionRepository.findOwnedByHarnessRef(harnessSessionRef, installationId),
     emit: (event) => runtime.emit(event),
     hub,
   });
@@ -244,6 +259,38 @@ export async function sharedEventGateway(): Promise<EventGateway> {
     return cached.gateway;
   }
   const { database, runtime, bus } = await sharedRuntime();
+
+  // Who is already running, read once so the world is not empty — and not made
+  // of placeholders — to the first person who opens it. The read is HERE rather
+  // than inside the hub because this function is async and the hub is not: the
+  // hub takes its snapshot synchronously, on purpose, so no event can slip
+  // between "here is the world" and "this client is watching". Awaiting a query
+  // inside `subscribe` would reopen exactly that window, and the symptom would
+  // be an agent that started during someone's first frame being invisible
+  // forever.
+  //
+  // A failure here is deliberately swallowed. This is a nicety on top of the
+  // realtime path, and a database that is briefly unreachable should leave the
+  // stream working with whatever presence the bus has already learned — not take
+  // the whole event gateway down.
+  let liveAgents: readonly LiveAgent[] = [];
+  try {
+    liveAgents = (await new DrizzleSessionSweeper(database).findLivePresence()).map((row) => ({
+      sessionId: row.sessionId,
+      agentId: row.agentId,
+      agentName: row.agentName,
+      harness: row.harness,
+      level: row.level,
+      zone: 'idle',
+    }));
+  } catch (error) {
+    process.stderr.write(
+      `[events] could not read live agents, starting with an empty world: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+  }
+
   // The authenticator is the one thing here that needs the agent feature, and it
   // is supplied here rather than imported, so this file has no feature import and
   // the removal test can take the feature out without touching it. This function
@@ -253,6 +300,7 @@ export async function sharedEventGateway(): Promise<EventGateway> {
     database,
     runtime,
     bus,
+    liveAgents,
     authenticate: async (request) => {
       const caller = await authenticate(
         { store: new DrizzleCredentialStore(database), now: new Date().toISOString() },

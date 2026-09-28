@@ -127,6 +127,16 @@ const LAYERS = [
     files: ['packages/protocol/**/*.ts'],
   },
   {
+    // A process runner, not a wire format — it reads the filesystem to tell a
+    // file from a directory and installs signal handlers, which protocol
+    // deliberately stays free of. Classified separately rather than folded into
+    // protocol so an adapter's `bin` can depend on it without adapters at large
+    // gaining a filesystem/process dependency through protocol.
+    name: 'harness-runner',
+    instance: /^packages\/harness-runner(?:\/|$)/,
+    files: ['packages/harness-runner/**/*.ts'],
+  },
+  {
     name: 'presentation',
     instance:
       /^(?:apps\/web|apps\/presentation\/[^/]+|packages\/game-client|packages\/presentation\/[^/]+)(?:\/|$)/,

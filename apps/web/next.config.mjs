@@ -1,7 +1,22 @@
+import path from 'node:path';
+
 /** @type {import('next').NextConfig} */
 
 const nextConfig = {
   reactStrictMode: true,
+  // Next infers the workspace root by walking up for a lockfile, and it picks the
+  // FIRST one it finds. A developer with an unrelated project (or a stray
+  // `pnpm-lock.yaml`) somewhere above this repo on the same drive — in practice
+  // `~/`, which is the home directory — makes that inference reach the home
+  // directory instead, and the build then globs every file under it. Observed:
+  // a socket file in the system temp directory made `next build` fail with
+  // EACCES on a path that has nothing to do with this application, while every
+  // stage that reads tsconfig stayed green.
+  //
+  // The fix is to stop inferring. Naming the root makes the build a function of
+  // this repository alone, which is the property the rest of this file is
+  // reaching for anyway.
+  outputFileTracingRoot: path.join(import.meta.dirname, '..', '..'),
   // The workspace packages are consumed as source, not as built dist. That is
   // what makes `pnpm dev` reflect an edit to a feature without a rebuild, and
   // it is why the Dockerfile installs first and runs second.

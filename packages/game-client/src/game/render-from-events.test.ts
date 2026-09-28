@@ -7,6 +7,7 @@ import { GameClient } from '../client.js';
 import { CountingView, PixiWorldView } from './view.js';
 import { SpriteCache } from '../sprites/sprite-factory.js';
 import { placementFor, zoneForTool, ZONE_PLACEMENT } from '../zones.js';
+import { CITY } from '../scenes/scene-config.js';
 import { TOOL_ZONE_MAP, getZoneForTool, type ZoneId } from '@battle-agents/protocol';
 
 /**
@@ -245,13 +246,21 @@ describe('zone mapping is config-driven and consumes the one table', () => {
     expect(store.get('s1')?.zone).toBe('bounty-board');
   });
 
-  it('draws a zone marker for every placed zone, built once', () => {
+  it('draws a zone marker for every zone IN ITS SCENE, built once', () => {
     const store = new WorldStore();
-    const view = new PixiWorldView({ store, cache: new SpriteCache() });
+    const view = new PixiWorldView({ store, scene: CITY, cache: new SpriteCache() });
     // One marker per zone, and the count does not grow with deltas — the layer
     // is static and a per-delta marker build would be an unbounded leak.
+    //
+    // Scoped to the city. The table covers all three scenes and this assertion
+    // used to demand every row of it, which is what pinned the defect: a view
+    // that drew the whole table on a 32x32 grid passed this test and rendered
+    // the arena's marker on top of the Coding City.
     const markers = view.zoneLayer.children.length;
-    expect(markers).toBe(Object.keys(ZONE_PLACEMENT).length);
+    const cityZones = (Object.keys(ZONE_PLACEMENT) as (keyof typeof ZONE_PLACEMENT)[]).filter(
+      (zone) => ZONE_PLACEMENT[zone].scene === CITY.id,
+    );
+    expect(markers).toBe(cityZones.length);
 
     for (let i = 0; i < 50; i += 1) {
       store.applyDelta(toolStarted(`s${i}`, 'Read'));

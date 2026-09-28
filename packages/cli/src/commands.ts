@@ -68,6 +68,39 @@ const PLATFORM_COMMANDS = new Set([
 ]);
 
 /**
+ * The verbs that must work BEFORE a session exists.
+ *
+ * This list exists because the entry point checked for a session before it
+ * dispatched anything, and `login` is a verb. So the first command anybody could
+ * possibly type was refused with "not logged in. Run `agent-battle login …`",
+ * which is the shape of a deadlock: the instruction to fix it is the command
+ * that cannot be reached. `agent-battle help` was refused the same way, so
+ * there was no way to find out what the CLI offered.
+ *
+ * The set is the whole of the fix and it is small. `login` and `logout` write
+ * the session file, `init` reports it, and `help` prints usage — none of them
+ * can talk to a server, because there is nothing to talk to a server WITH yet.
+ * `discover` and `status` DO need an API, so they stay behind the check and
+ * answer the "not logged in" message, which is a real answer for them.
+ *
+ * Derived from what the dispatcher handles rather than kept in main.ts, because
+ * the two places disagreeing is how this happened: main.ts had a policy and
+ * dispatch had the commands, and nothing reconciled them.
+ */
+export const SESSIONLESS_VERBS: ReadonlySet<string> = new Set([
+  'help',
+  '--help',
+  'login',
+  'init',
+  'logout',
+]);
+
+/** Whether this invocation can be served with no session file on disk. */
+export function runsWithoutSession(argv: readonly string[]): boolean {
+  return SESSIONLESS_VERBS.has(argv[0] ?? '');
+}
+
+/**
  * The agent runtime verbs.
  *
  * `start` and `stop` are NOT special-cased into game knowledge. They are
@@ -205,6 +238,115 @@ async function dispatch(api: ApplicationApi, invocation: Invocation): Promise<Co
  * them, and doing so is how a surface ends up behaving differently from the
  * others.
  */
+/**
+ * Parses one `--key value` payload.
+ *
+ * A value that starts with `{` or `[` is parsed as JSON, and that is what makes
+ * the CLI able to reach a structured field at all. Nearly every action with real
+ * parameters has one — `battle.finish` takes an array of per-fighter results,
+ * `battle.create` takes a weights object — and a CLI whose values are all
+ * strings cannot express either. It is not a convenience: it is the difference
+ * between the CLI reaching the arena and the CLI reaching nothing past `list`.
+ *
+ * A value that does NOT parse is left as the string it is, rather than refused.
+ * A PR body or a commit message can begin with a brace and mean it literally, and
+ * a CLI that turns that into an error has replaced a wrong value with a missing
+ * one. The features validate their own fields, so the worst case is the feature
+ * saying the field was not the shape it wanted — which names itself.
+ */
+function payload(value: string): unknown {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+/**
+ * Turns command-line arguments into the object an action receives.
+ *
+ * ## What this replaces
+ *
+ * `act()` was called with `{ args: args.join(' ') }` — every argument collapsed
+ * into one string under a key named `args`. `/api/act` then handed that object
+ * straight to the feature, so `bounty.claim` was asked for a `bountyId` on an
+ * object that had neither a `bountyId` nor any other field a real action
+ * recognises. Every action invoked through the CLI failed on its input:
+ *
+ *     $ agent-battle bounty claim 00000000-0000-4000-8000-00000000000a
+ *     bounty.claim refused its input: bounty-id-not-a-string
+ *
+ * and the same call with a correct body over HTTP worked, which is what made
+ * this a CLI defect and not a feature one. The tests did not catch it because
+ * their fake actions were written to read `input.args` — the test agreed with
+ * the bug.
+ *
+ * ## The three accepted forms, and why there is no fourth
+ *
+ * `--key=value` and `--key value` for ordinary arguments; a single JSON object
+ * for anything structured; and nothing else. A bare positional has no honest
+ * default, because the two ways to guess it — "first argument is the id" or
+ * "join them" — are both wrong for some action, and a CLI that guesses sends the
+ * feature a plausible object it will refuse with a message about the wrong
+ * field. Refusing here, naming the two forms, is the answer a person or an
+ * agent can act on.
+ */
+export function actionInput(
+  args: readonly string[],
+  actionId: string,
+): Record<string, unknown> {
+  if (args.length === 0) return {};
+
+  if (args.length === 1 && args[0]!.trimStart().startsWith('{')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(args[0]!);
+    } catch (error) {
+      throw new UsageError(
+        `${actionId}: the single argument looked like JSON but did not parse ` +
+          `(${error instanceof Error ? error.message : String(error)}). ` +
+          'Pass an object, or use --key value pairs.',
+      );
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new UsageError(`${actionId}: the JSON argument must be an object, not ${describe(parsed)}.`);
+    }
+    return parsed as Record<string, unknown>;
+  }
+
+  const input: Record<string, unknown> = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (!argument.startsWith('--')) {
+      throw new UsageError(
+        `${actionId}: "${argument}" is a bare value and this build will not guess which ` +
+          'field it belongs to. Use --name value, --name=value, or pass one JSON object.',
+      );
+    }
+    const withoutDashes = argument.slice(2);
+    const equals = withoutDashes.indexOf('=');
+    if (equals !== -1) {
+      input[withoutDashes.slice(0, equals)] = payload(withoutDashes.slice(equals + 1));
+      continue;
+    }
+    const next = args[index + 1];
+    if (next === undefined || next.startsWith('--')) {
+      throw new UsageError(`${actionId}: --${withoutDashes} needs a value.`);
+    }
+    input[withoutDashes] = payload(next);
+    index += 1;
+  }
+  return input;
+}
+
+function describe(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return `a ${typeof value}`;
+}
+
 async function actOn(
   api: ApplicationApi,
   emit: (value: unknown) => CommandResult,
@@ -217,7 +359,7 @@ async function actOn(
       const suffix = offered === undefined ? '' : ` This domain offers: ${offered.join(', ')}`;
       throw new UsageError(`no action "${actionId}" in this build.${suffix}`);
     }
-    return emit(await api.act(actionId, { args: args.join(' ') }));
+    return emit(await api.act(actionId, actionInput(args, actionId)));
   } catch (error) {
     if (error instanceof UsageError) throw error;
     throw new CommandFailedError(

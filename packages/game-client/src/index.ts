@@ -31,7 +31,6 @@
 export { topdown, isometric, type Projection } from './game/projection.js';
 export {
   CountingView,
-  DEFAULT_GRID,
   PixiWorldView,
   type PixiViewOptions,
   type WorldViewLike,
@@ -128,4 +127,47 @@ export {
   type SpriteKey,
   type SpriteKind,
 } from './sprites/sprite-factory.js';
+export {
+  ALL_ZONES,
+  ART_BASE,
+  ZONES_WITH_BUILDINGS,
+  buildingForZone,
+  loadSpriteAssets,
+  type ArtTheme,
+  type HeroSheet,
+  type LoadSpriteAssetsOptions,
+  type SpriteAssets,
+} from './sprites/asset-atlas.js';
+export {
+  KENNEY_DUNGEON_PACK,
+  KENNEY_GROUND_PACK,
+  KENNEY_PLATFORMER_PACK,
+  KENNEY_SHIOT_PACK,
+  KENNEY_SKI_PACK,
+  KENNEY_TERRAIN_PACKS,
+  KENNEY_TOWN_PACK,
+} from './sprites/kenney-packs.js';
 export { PixelCanvas, hex, withAlpha, type Rgba } from './sprites/pixel-canvas.js';
+export {
+  DEFAULT_POINTER_CONFIG,
+  idlePointer,
+  reducePointer,
+  selectionRectFrom,
+  type Point,
+  type PointerConfig,
+  type PointerEvent,
+  type PointerIntent,
+  type PointerPhase,
+  type PointerState,
+  type PointerStep,
+  type SelectionRect,
+} from './game/pointer-intent.js';
+export {
+  CONTROL_GROUP_KEYS,
+  appendControlGroup,
+  assignControlGroup,
+  isControlGroupKey,
+  recallControlGroup,
+  type ControlGroupKey,
+  type ControlGroups,
+} from './game/control-groups.js';

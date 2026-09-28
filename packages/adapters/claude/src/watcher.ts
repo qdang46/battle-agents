@@ -205,6 +205,18 @@ export class ClaudeWatcher implements AgentWatcher {
       // before the next session's are allowed into the same buffer.
       await this.#flush();
       this.#session = target.sessionId;
+      // NO HANDSHAKE HERE, and that is deliberate. An earlier version of this
+      // watcher took an `openSession` callback and called it on every session
+      // change, which meant the handshake lived in the adapter — and had to be
+      // written nine times, once per harness, for the M7 promise to be true.
+      //
+      // It now lives in the SENDER, in `@battle-agents/protocol`: the runner
+      // wraps the ingest sender in one that opens a platform run for each
+      // `sessionId` it sees, exactly once. A watcher that emits a sessionId is
+      // connected, and this file no longer knows what a platform is.
+      //
+      // The eleven-runs-in-twenty-seconds bug moved with it and is fixed there
+      // too: the set that deduplicates is the sender's, not this watcher's.
     }
 
     const discovered = target.sessionId !== undefined;

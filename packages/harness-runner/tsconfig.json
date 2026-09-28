@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    // Node types ARE required here, and the reason is the difference from
+    // `protocol`. This package is a PROCESS: it reads the filesystem to tell a
+    // file from a directory, installs signal handlers, and calls `exit`. The
+    // base sets `types: []` to keep the wire format free of a Node assumption,
+    // and that is still right for everything else in the workspace — this is
+    // the one package where it is not, and saying so here is cheaper than
+    // discovering it in a build.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

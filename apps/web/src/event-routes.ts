@@ -56,6 +56,22 @@ export interface EventRouteDependencies {
     sessionId: string,
     installationId: string,
   ) => Promise<ResolvedSession | undefined>;
+  /**
+   * Finds a session by the id ITS HARNESS uses, for the same installation.
+   *
+   * Separate from `resolveSession` rather than folded into it, because the two
+   * answer different questions and conflating them would let a harness name a
+   * session by an id it does not own. `resolveSession` is "is this the platform's
+   * id"; this is "is this one of MY runs, which you happen to call that".
+   *
+   * Without it the real adapter is dead on arrival: `agent-battle-claude` posts
+   * under the id Claude Code wrote into a filename, the platform's ids come from
+   * the database, and every batch is refused with `no such session`.
+   */
+  readonly resolveSessionByHarnessRef?: (
+    harnessSessionRef: string,
+    installationId: string,
+  ) => Promise<ResolvedSession | undefined>;
   /** The runtime's emit. Persists key events and publishes to the bus. */
   readonly emit: (event: GameEvent) => Promise<void>;
   /** The realtime fan-out. Read by the stream route, never by the ingest route. */
@@ -118,6 +134,55 @@ export function createEventRoutes(
  * heartbeat and the sweeper), and doing it here would give the ingest path a
  * second, quieter opinion about when a run is alive.
  */
+/**
+ * The session a batch of events is about, by either name.
+ *
+ * The platform id is tried first, and the harness ref second. The order is the
+ * whole contract: a client that has a real platform session is on the fast, exact
+ * path, and only an adapter that has no way to learn the platform's id falls
+ * through to the ref it supplied at handshake.
+ *
+ * Both lookups are ownership-scoped by the same installation, so a fallback here
+ * widens nothing — it only recognises a run the caller was already entitled to
+ * write to, under a different name.
+ *
+ * ## Why the first lookup is GUARDED
+ *
+ * `sessions.id` is a `uuid` column, and a harness's own id is whatever that
+ * harness calls a run. Goose names them `20260926_104500`; Aider names them
+ * `<transcript path>#<timestamp>`. Passing either to the id query does not
+ * return nothing — Postgres raises `invalid input syntax for type uuid`, the
+ * whole ingest answers 500, and the batch is lost.
+ *
+ * It looks like a data problem and is a type problem, which is why the check is
+ * here rather than in the repository: a repository cannot be asked "is this not
+ * a uuid, then do not look" without every caller remembering to ask.
+ */
+async function resolveForIngest(
+  dependencies: EventRouteDependencies,
+  sessionId: string,
+  installationId: string,
+): Promise<ResolvedSession | undefined> {
+  if (isPlatformSessionId(sessionId)) {
+    const byId = await dependencies.resolveSession(sessionId, installationId);
+    if (byId !== undefined) return byId;
+  }
+  if (dependencies.resolveSessionByHarnessRef === undefined) return undefined;
+  return await dependencies.resolveSessionByHarnessRef(sessionId, installationId);
+}
+
+/**
+ * Whether this could be a platform session id at all.
+ *
+ * Deliberately the same shape the column accepts, and deliberately not a parse:
+ * a stricter check would reject ids the database would have found, and the
+ * fallback below is ownership-scoped, so a wrong guess costs a query and not
+ * access.
+ */
+function isPlatformSessionId(value: string): boolean {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value);
+}
+
 async function postEvents(
   dependencies: EventRouteDependencies,
   request: HttpRequest,
@@ -163,13 +228,25 @@ async function postEvents(
     };
   }
 
-  const session = await dependencies.resolveSession(sessionId, caller.installationId);
+  const session = await resolveForIngest(dependencies, sessionId, caller.installationId);
   if (session === undefined) {
     return { status: 404, body: { error: 'no such session' } };
   }
 
   for (const event of parsed.events) {
-    await dependencies.emit(toGameEvent(event, session.agentId));
+    // The harness's own session id STOPS HERE.
+    //
+    // It is how the batch was addressed and it is how the run was found, and
+    // past this line it is not a thing the platform has. Everything downstream —
+    // `event_log.session_id`, the store, the replay, the world's characters — is
+    // keyed on the platform's id, and that column is a `uuid`. A harness that
+    // names its runs `20260926_104500`, or `<transcript path>#<timestamp>`,
+    // otherwise writes its own vocabulary into a uuid column and the insert
+    // fails with a query error that names a table rather than a boundary.
+    //
+    // So the id is translated on the way in, which is what "adapters translate,
+    // the game decides" means at the last point where both are present.
+    await dependencies.emit(toGameEvent(event, session.agentId, session.id));
   }
 
   return {
@@ -192,12 +269,24 @@ async function postEvents(
  * grows, and the hub closes it for falling behind. The backpressure is the
  * browser's own, and no polling loop is needed to notice it.
  *
- * No authentication here, deliberately. The stream is a single global broadcast
- * of the catalog snapshot plus activity deltas — a spectator view of the same
- * data the game shows publicly — and per-user or per-battle channel scoping
- * arrives with the game client, which is where the question of who may watch
- * which battle is actually answered. Binding it to a Bearer installation token
- * now would be a guess about a policy that has not been written down.
+ * AUTHENTICATION IS NOT HERE, and that is deliberate rather than an omission.
+ * This function is pure — collaborators in, `HttpResponse` out — and it knows
+ * nothing about web sessions. The check lives in the Next.js adapter at
+ * `app/api/events/stream/route.ts`, which reads the session cookie through
+ * `resolveViewer`, because a browser `EventSource` cannot present a Bearer
+ * header and this repository forbids tokens in URLs.
+ *
+ * It was open, and the comment above used to say that was on purpose, on the
+ * grounds that scoping "arrives with the game client". `docs/design/
+ * public-event-stream.md` rules the other way and is the document that decided
+ * the classification: until authentication AND scoping exist, the stream is
+ * closed, not open and filtered. The endpoint now answers 401 to a reader with
+ * no session. Scoping — one battle, one user, or the whole arena — the same
+ * paragraph defers, because the classification is already safe for anyone.
+ *
+ * The classification below is therefore still load-bearing: it is what makes the
+ * stream safe to hand to a signed-in viewer rather than what makes it safe to
+ * hand to the internet.
  */
 function streamEvents(dependencies: EventRouteDependencies): HttpResponse {
   // Explicit: this is the spectator view, so the public classification applies.
@@ -234,12 +323,21 @@ function streamEvents(dependencies: EventRouteDependencies): HttpResponse {
  * network finished. `actorId` is the session's agent, which is the one that owns
  * this run.
  */
-function toGameEvent(event: AgentEvent, actorId: string): GameEvent {
+function toGameEvent(event: AgentEvent, actorId: string, platformSessionId: string): GameEvent {
   return {
     type: event.type,
     occurredAt: event.at,
     actorId,
-    payload: event,
+    // The payload is the whole validated event, re-addressed. `sessionId` is the
+    // ONE field rewritten, because it is the one field the platform owns a
+    // different name for; everything else — the harness, the tool, the suite,
+    // the test count — is the adapter's to choose and is carried through as
+    // written. The rewrite is conditional so a caller that already holds a
+    // platform id is not handed a copy that merely looks rewritten.
+    payload:
+      event.sessionId === platformSessionId
+        ? event
+        : { ...event, sessionId: platformSessionId },
   };
 }
 

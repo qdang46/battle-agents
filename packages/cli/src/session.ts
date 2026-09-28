@@ -24,8 +24,28 @@ export interface StoredSession {
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 
+/**
+ * The session file's directory, overridable for a test or a second identity.
+ *
+ * `AGENT_BATTLE_HOME` rather than a full path, because the file inside it is an
+ * implementation detail — a test that names the file has to be rewritten if the
+ * layout ever moves, and one that names the directory does not.
+ *
+ * This exists because it could not be tested without it. `logout` deletes the
+ * session, so a test that ran it against the default path deleted the REAL
+ * session of whoever ran the suite — which is how the CLI under test logged the
+ * developer out mid-run. Point it at a temp directory and `logout` becomes a
+ * thing a test can assert about instead of a thing a test has to avoid.
+ */
+const HOME_VARIABLE = 'AGENT_BATTLE_HOME';
+
+export function sessionDirectory(env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const override = env[HOME_VARIABLE];
+  return override === undefined || override.trim() === '' ? homedir() : override;
+}
+
 export function sessionPath(): string {
-  return join(homedir(), '.agent-battle', 'session.json');
+  return join(sessionDirectory(), '.agent-battle', 'session.json');
 }
 
 /** The stored session, or undefined when this machine has not logged in. */

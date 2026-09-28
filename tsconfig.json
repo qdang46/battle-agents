@@ -47,6 +47,7 @@
       "@battle-agents/game-client": ["./packages/game-client/src/index.ts"],
       "@battle-agents/gemini": ["./packages/adapters/gemini/src/index.ts"],
       "@battle-agents/goose": ["./packages/adapters/goose/src/index.ts"],
+      "@battle-agents/harness-runner": ["./packages/harness-runner/src/index.ts"],
       "@battle-agents/github": ["./packages/infrastructure/github/src/index.ts"],
       "@battle-agents/guild": ["./packages/features/guild/src/index.ts"],
       "@battle-agents/inventory": ["./packages/features/inventory/src/index.ts"],

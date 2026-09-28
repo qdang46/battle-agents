@@ -16,7 +16,7 @@ const INFRASTRUCTURE_DIR = 'packages/infrastructure';
 const PACKAGE_CONTAINER_DIRS: readonly string[] = [ADAPTERS_DIR, FEATURES_DIR, INFRASTRUCTURE_DIR];
 const TYPESCRIPT_EXTENSION = '.ts';
 const IGNORED_DIRECTORIES: readonly string[] = ['dist', 'node_modules'];
-const LAYER_ALLOWED_PACKAGES: readonly string[] = ['core', 'protocol'];
+const LAYER_ALLOWED_PACKAGES: readonly string[] = ['core', 'protocol', 'harness-runner'];
 const GAME_VOCABULARY: readonly string[] = [
   'battle',
   'bounty',

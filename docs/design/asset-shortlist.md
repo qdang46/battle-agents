@@ -14,6 +14,7 @@ Paths are `apps/web/public/art/<pack>/`, per §19 — with a rewrite so the URL
 
 | Pack            | Source                                                                                              | Licence | Style                                                                    | Role                                       |
 | --------------- | --------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------ | ------------------------------------------ |
+| age-of-agents   | [agentsmill/age-of-agents](https://github.com/agentsmill/age-of-agents) `packages/client/public/assets/{fantasy,scifi,emblems}` | MIT | fantasy/scifi pixel, **TexturePacker sheets with `.json` frame manifests** | the characters, buildings and terrain the game actually draws |
 | tiny-swords-cc0 | [Pixel Frog, Tiny Swords update 010](https://pixelfrog-assets.itch.io/tiny-swords), via agent-quest | CC0-1.0 | fantasy pixel, 64px tile grid; frames are source-scale sheets, not 16×16 | V0 characters, terrain, buildings, effects |
 | kenney-tiny-dungeon | [Kenney — Tiny Dungeon](https://kenney.nl/assets/tiny-dungeon) | CC0-1.0 | 16×16 pixel, dungeon tiles, flat colour | dungeon terrain and props |
 | kenney-tiny-town | [Kenney — Tiny Town](https://kenney.nl/assets/tiny-town) | CC0-1.0 | 16×16 pixel, town tiles, flat colour | the city's streets and plots |
@@ -84,6 +85,18 @@ style column, and it is the plan's stated criterion.
 
 
 ## The style claim, stated honestly
+
+**`age-of-agents` is a different family, and it is now the one the game draws.**
+Its sheets are 68×68 characters, 192×192 buildings and 32×32 terrain, against
+Kenney's 16×16. Two families in one atlas is the same boundary this table already
+draws for the vector UI packs, and it is worth being explicit about which side of
+it this pack sits on: the Coding City is drawn from `age-of-agents` ALONE —
+`SpriteCache` resolves every agent, building and zone from that one pack — so
+what the player sees is internally consistent, and the Kenney sets below are
+available for chrome and icons rather than mixed into the world.
+
+The alternative was worse: characters from one family standing on ground from
+another is the exact mismatch the placeholder factory was built to avoid.
 
 **Rows 2–8 are one family.** 16×16/16×18 flat pixel with no anti-aliasing, and
 seven of the ten come from Kenney's own "Tiny"/pixel line, which is internally

@@ -5,9 +5,39 @@ The root [README.md](README.md) has the vision; this file has the map.
 
 ## What this is
 
-A universal protocol and runtime that normalizes many coding CLIs into one
-vocabulary, plus a game built on top of it. An agent claims bounties on real
-GitHub issues, opens a PR, earns XP, and battles other agents.
+**A native pixel RPG that happens to run inside a browser** — not a React
+website with a game embedded in it. An agent claims bounties on real GitHub
+issues, opens a PR, earns XP, and battles other agents.
+
+## The one rule that overrides everything else below
+
+**The browser is the runtime. The game is the product.** There is no "plain web
+plus an embedded game" in this product; the whole application IS the game.
+
+The full doctrine is [docs/design/game-first-doctrine.md](docs/design/game-first-doctrine.md)
+and it is binding. The four that break most often:
+
+- **`/` is the game.** Fullscreen, `position: fixed; inset: 0`, no layout above
+  it. Not a dashboard, not a redirect into one.
+- **Scene, not route.** City / Arena / Guild Hall are state. A scene switch keeps
+  the PixiJS application, the world store, the SSE connection, the asset cache and
+  the camera. It is `GameClient.rebindView()`, never a navigation.
+- **Every feature has a place in the world.** A bounty is a notice board. A
+  profile is a character sheet. Settings is the pause menu. If you cannot say
+  where in the world a feature lives, it is not finished.
+- **No SaaS chrome.** No navbar, no sidebar, no card grid, no table doing the
+  work of a game screen. If a screen looks like Linear or Notion it is wrong, no
+  matter how clean it is.
+
+`scripts/check-game-first.sh` enforces the first two mechanically and runs in the
+M0 gate. **A green suite with a red `check-game-first` is a broken gate, not a
+passing build.** When you add a screen, the gate is the place that has to learn
+it exists — not the place to be worked around.
+
+Assets from `.tmp` and the vendored packs under `apps/web/public/art/` are the
+source of truth. A procedurally drawn shape where art already exists is a bug
+with a licence file next to it, and this repository has shipped that bug
+through a fully green test suite.
 
 ## Before you write code
 

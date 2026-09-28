@@ -36,6 +36,16 @@ import type { ZoneId } from '@battle-agents/protocol';
 export interface AgentView {
   readonly agentId: string;
   readonly sessionId: string;
+  /**
+   * What the world calls this character, when the snapshot said.
+   *
+   * Absent for a client hydrating from bare `liveSessionIds`, which is the older
+   * snapshot shape. It is a display concern and nothing derives from it: the
+   * store keys on `sessionId` and the view draws whatever is here.
+   */
+  readonly name: string | undefined;
+  /** Progression level, from the agent row. Undefined when the snapshot had none. */
+  readonly level: number | undefined;
   /** Absent until a `session.started` says which harness is running. */
   readonly harness: string | undefined;
   readonly zone: ZoneId;
@@ -75,6 +85,23 @@ export type StoreChange =
 export interface WorldSnapshot {
   readonly protocolVersion: string;
   readonly liveSessionIds: readonly string[];
+  /**
+   * The same sessions, described well enough to draw.
+   *
+   * Optional because a server that predates it sends only the ids, and a client
+   * that insists on this field would then hydrate an EMPTY world from a stream
+   * that plainly listed nineteen agents. Preferring it when present is what turns
+   * a nameless figure in the plaza into a character with a name, a harness and a
+   * level; ignoring it when absent is what keeps an older server usable.
+   */
+  readonly liveAgents?: readonly {
+    readonly sessionId: string;
+    readonly agentId: string;
+    readonly agentName: string;
+    readonly harness: string;
+    readonly level: number;
+    readonly zone: string;
+  }[];
 }
 
 /** A payload as the reducer reads it. The wire types it as `unknown`. */
@@ -109,13 +136,39 @@ export class WorldStore {
     this.#agents.clear();
     this.#protocolVersion = snapshot.protocolVersion;
     this.#hydrated = true;
-    // The snapshot names live sessions, not agents, and carries no harness or
-    // zone. Each becomes a placeholder the first delta fills in, which is the
-    // honest reading: the client knows the session exists and knows nothing
-    // else about it yet.
+
+    // `liveAgents` when the server sends it, `liveSessionIds` when it does not.
+    //
+    // It used to be the second branch only, and that is why every character in
+    // the Coding City was anonymous: a snapshot that names sessions produces one
+    // figure per session with no name, no harness and a fixed zone, and a delta
+    // only arrives for work that HAPPENS AFTER you connected. An agent that
+    // finished its run an hour ago stayed a placeholder in the plaza forever,
+    // which is a map full of ghosts rather than of people.
+    const described = snapshot.liveAgents;
+    if (described !== undefined && described.length > 0) {
+      for (const live of described) {
+        this.#agents.set(live.sessionId, {
+          agentId: live.agentId,
+          sessionId: live.sessionId,
+          name: live.agentName,
+          level: live.level,
+          harness: live.harness as AgentView['harness'],
+          zone: (live.zone.length > 0 ? live.zone : 'idle') as ZoneId,
+          tool: undefined,
+          children: EMPTY,
+          online: true,
+        });
+      }
+      this.#publish({ kind: 'hydrated', agentIds: [...this.#agents.keys()] });
+      return;
+    }
+
     for (const sessionId of snapshot.liveSessionIds) {
       this.#agents.set(sessionId, {
         agentId: sessionId,
+        name: undefined,
+        level: undefined,
         sessionId,
         harness: undefined,
         zone: 'idle',
@@ -185,6 +238,8 @@ export class WorldStore {
   ): Map<string, AgentView> | undefined {
     const base = this.#agents.get(sessionId) ?? {
       agentId: sessionId,
+      name: undefined,
+      level: undefined,
       sessionId,
       harness: undefined,
       zone: 'idle' as ZoneId,
@@ -250,6 +305,12 @@ export class WorldStore {
         patch.set(child, {
           agentId: child,
           sessionId: child,
+          // A subagent has no name of its own yet. Its parent's is deliberately
+          // NOT borrowed: two characters on one map both called Claude is a worse
+          // lie than one called by its id, and the child's own `session.started`
+          // replaces this as soon as it reports in.
+          name: undefined,
+          level: undefined,
           harness: base.harness,
           zone: base.zone,
           tool: undefined,
@@ -327,6 +388,8 @@ export class WorldStore {
 function emptyView(sessionId: string): AgentView {
   return {
     agentId: sessionId,
+    name: undefined,
+    level: undefined,
     sessionId,
     harness: undefined,
     zone: 'idle',
@@ -343,6 +406,8 @@ function patching(base: AgentView, changes: Partial<AgentView>): AgentView {
 function sameView(left: AgentView, right: AgentView): boolean {
   return (
     left.agentId === right.agentId &&
+    left.name === right.name &&
+    left.level === right.level &&
     left.sessionId === right.sessionId &&
     left.harness === right.harness &&
     left.zone === right.zone &&

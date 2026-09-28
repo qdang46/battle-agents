@@ -98,7 +98,17 @@ export type { BatchLimits, EventBufferOptions } from './event-buffer.js';
 
 /* ── the way out ── */
 
-export { createIngestSender, IngestRefusedError } from './ingest.js';
+export {
+  createIngestSender,
+  createSessionOpeningSender,
+  sayHello,
+  HelloRefusedError,
+  IngestRefusedError,
+  type HelloOptions,
+  type HelloResult,
+  type SessionOpeningOptions,
+  type SessionOpeningSender,
+} from './ingest.js';
 export type {
   FetchLike,
   HttpRequestInit,

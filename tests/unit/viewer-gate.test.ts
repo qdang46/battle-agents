@@ -46,8 +46,18 @@ const AUTH_VARIABLES = [
   'GITHUB_CLIENT_SECRET',
 ] as const;
 
-/** Everything `sharedAuth` touches, which is the four plus the pool. */
-const TOUCHED = [...AUTH_VARIABLES, 'DATABASE_URL'] as const;
+/**
+ * Everything `sharedAuth` touches, which is the four plus the pool.
+ *
+ * `AGENT_BATTLE_DEV_LOGIN` is in this list and not because `sharedAuth` reads it.
+ * It is here because a developer who has followed the .env.example instructions
+ * and exported the flag in their shell would otherwise have every assertion in
+ * this file fail for a reason that has nothing to do with what it is testing —
+ * and the fix a person reaches for is to delete the flag, not to notice that the
+ * test depends on ambient environment. The environment under test is deleted and
+ * restored; a variable this file does not name is not part of it.
+ */
+const TOUCHED = [...AUTH_VARIABLES, 'DATABASE_URL', 'AGENT_BATTLE_DEV_LOGIN'] as const;
 
 const saved = new Map<string, string | undefined>();
 
@@ -105,6 +115,54 @@ describe('resolveViewer on a deployment with nothing configured', () => {
   });
 });
 
+describe('resolveViewer under the development bypass', () => {
+  it('answers dev-login WITHOUT reading the auth configuration', async () => {
+    // The order matters as much as the answer: a developer with no OAuth app
+    // must not have to configure one to look at the product, so the bypass is
+    // consulted before `sharedAuth()` is ever called. Deleting every auth
+    // variable is what makes that observable -- if the bypass were checked after
+    // the config read, this would answer `auth-unconfigured` and the whole
+    // feature would be dead on a clean clone, which is precisely the case it
+    // exists for.
+    for (const name of TOUCHED) delete process.env[name];
+    process.env.AGENT_BATTLE_DEV_LOGIN = '1';
+
+    await expect(resolveViewer(new Headers())).resolves.toEqual({ kind: 'dev-login', login: 'dev-login' });
+  });
+
+  it('still refuses under NODE_ENV=production, and says why', async () => {
+    // The guard, exercised through the function that consumes it rather than
+    // only through `devLoginEnabled`. A deployment that sets the flag in its
+    // environment must land on the ordinary gate.
+    //
+    // NODE_ENV is restored by hand rather than through the TOUCHED list, which
+    // is about variables this file deletes to provoke a branch. This one is
+    // overwritten to provoke a branch, and leaving it set to `production` would
+    // change what every test after this one resolves.
+    const priorNodeEnv = process.env.NODE_ENV;
+    try {
+      for (const name of TOUCHED) delete process.env[name];
+      process.env.AGENT_BATTLE_DEV_LOGIN = '1';
+      process.env.NODE_ENV = 'production';
+
+      const answer = await resolveViewer(new Headers());
+
+      // Asserting the SHAPE rather than the specific state, and the reason is
+      // worth recording: `sharedAuth` memoises its instance, so whichever test
+      // first builds it decides whether a later unconfigured render throws
+      // (`auth-unconfigured`) or gets a cached server and a null session
+      // (`signed-out`). Both are closed. Asserting one of them would make this
+      // file's verdict depend on its own ordering, which is a test that passes
+      // for a reason nobody can state.
+      expect(answer).not.toMatchObject({ kind: 'dev-login' });
+      expect(['auth-unconfigured', 'signed-out']).toContain(answer.kind);
+    } finally {
+      if (priorNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = priorNodeEnv;
+    }
+  });
+});
+
 describe('viewerMayRead', () => {
   it('admits a signed-in viewer and refuses the other two', () => {
     expect(viewerMayRead({ kind: 'signed-in', login: 'octocat' })).toBe(true);
@@ -113,5 +171,14 @@ describe('viewerMayRead', () => {
     // the board empty until it is answered, and a reader predicate that
     // admitted this state would put it straight back.
     expect(viewerMayRead({ kind: 'auth-unconfigured', missing: ['X'] })).toBe(false);
+  });
+
+  it('admits the development bypass, because admitting it is the whole point of it', () => {
+    // Stated rather than assumed, because this is the assertion that makes the
+    // bypass a way to SEE the product. The counterweight is not here: it is that
+    // `devLoginEnabled` refuses under NODE_ENV=production, tested in
+    // dev-login.test.ts, so this predicate only ever sees a state the guard has
+    // already cleared.
+    expect(viewerMayRead({ kind: 'dev-login', login: 'dev-login' })).toBe(true);
   });
 });

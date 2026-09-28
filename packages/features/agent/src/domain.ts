@@ -190,6 +190,8 @@ export type AgentInputRejection =
   | { readonly reason: 'harness-not-a-string' }
   | { readonly reason: 'harness-empty' }
   | { readonly reason: 'project-key-not-a-string' }
+  | { readonly reason: 'harness-session-ref-not-a-string' }
+  | { readonly reason: 'harness-session-ref-empty' }
   | AgentNameRejection;
 
 /**
@@ -205,6 +207,26 @@ export interface CreateSessionInput {
   readonly agentName: string;
   readonly harness: Harness;
   readonly projectKey?: string | undefined;
+  /**
+   * The session id the HARNESS uses, when it has one.
+   *
+   * This is the field that makes a real adapter possible, and its absence is why
+   * `agent-battle-claude` runs, reads a real Claude Code transcript, and is then
+   * refused with `no such session` forever.
+   *
+   * The two sides each own an id and neither was reading the other's. The
+   * platform mints `sessions.id` from the database, so it can never be the
+   * filename Claude Code wrote; the adapter derives the harness id from that
+   * filename, so it can never be the platform's. `harness_session_ref` is the
+   * column that was already in the schema, seeded with a value, and read by
+   * nothing.
+   *
+   * So the handshake records what the harness calls this run, and ingest
+   * resolves by it. The platform keeps its own id — a harness is not trusted to
+   * name a session, only to say which of its own runs this is — and the two are
+   * joined here rather than by letting either side mint the other's.
+   */
+  readonly harnessSessionRef?: string | undefined;
 }
 
 /**
@@ -220,12 +242,13 @@ export function whyCreateSessionIsRejected(input: unknown): AgentInputRejection 
   if (typeof input !== 'object' || input === null) {
     return { reason: 'not-an-object' };
   }
-  const { installationKey, ownerId, agentName, harness, projectKey } = input as {
+  const { installationKey, ownerId, agentName, harness, projectKey, harnessSessionRef } = input as {
     readonly installationKey?: unknown;
     readonly ownerId?: unknown;
     readonly agentName?: unknown;
     readonly harness?: unknown;
     readonly projectKey?: unknown;
+    readonly harnessSessionRef?: unknown;
   };
 
   if (typeof installationKey !== 'string') {
@@ -268,6 +291,16 @@ export function whyCreateSessionIsRejected(input: unknown): AgentInputRejection 
   // expects a key.
   if (projectKey !== undefined && typeof projectKey !== 'string') {
     return { reason: 'project-key-not-a-string' };
+  }
+  // Same rule as `projectKey`, for the same reason: a ref that arrives as the
+  // wrong type is written straight into a TEXT column and then never matches a
+  // lookup, so a real adapter is refused with `no such session` and the operator
+  // has nothing to act on. Refusing here names the field instead.
+  if (harnessSessionRef !== undefined && typeof harnessSessionRef !== 'string') {
+    return { reason: 'harness-session-ref-not-a-string' };
+  }
+  if (typeof harnessSessionRef === 'string' && harnessSessionRef.trim() === '') {
+    return { reason: 'harness-session-ref-empty' };
   }
   return undefined;
 }

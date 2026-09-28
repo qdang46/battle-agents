@@ -33,6 +33,15 @@ export interface HelloRequest {
   readonly harness: string;
   /** The repository or workspace. Absent means "no project context". */
   readonly projectKey?: string | undefined;
+  /**
+   * The id the HARNESS calls this run, when it has one.
+   *
+   * Recorded rather than used as an identity: a Claude Code adapter knows the id
+   * in the transcript filename and the platform mints its own, so ingest needs
+   * the mapping to find this row again. Absent means "this client posts under
+   * the platform id", which is the MCP path and every test.
+   */
+  readonly harnessSessionRef?: string | undefined;
   readonly now: string;
 }
 
@@ -185,6 +194,13 @@ export async function hello(
     installationId: installation.id,
     projectId: project?.id ?? null,
     now: request.now,
+    // Carried so ingest can find this row by the name the HARNESS knows it by.
+    // Absent for a client that does not have one — the MCP path, a test — and
+    // the column stays null, which is what "this harness names its runs
+    // differently" looks like rather than an empty string that matches nothing.
+    ...(request.harnessSessionRef === undefined
+      ? {}
+      : { harnessSessionRef: request.harnessSessionRef }),
   });
   return {
     sessionId: created.id,

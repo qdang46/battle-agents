@@ -30,7 +30,10 @@
 
 import type { Texture } from 'pixi.js';
 
+import type { ZoneId } from '@battle-agents/protocol';
+
 import { PixelCanvas, hex, withAlpha } from './pixel-canvas.js';
+import { buildingForZone, type SpriteAssets } from './asset-atlas.js';
 
 /** The placeholder grid: a 16x16 sprite drawn at 3x. */
 export const PLACEHOLDER_TILE_PX = 16;
@@ -68,10 +71,21 @@ export interface SpriteKey {
   readonly kind: SpriteKind;
   /** Palette index, so N agents get N distinct colours. */
   readonly variant: number;
+  /**
+   * Which place this is, for a key that draws one.
+   *
+   * Present so the vendored art can answer "which building" rather than "which
+   * colour": the Arena's marker draws the arena and the Guild Hall's draws the
+   * guild, instead of both drawing a tinted square that happens to be keyed on a
+   * hash of the zone name. It is part of the key because two zones in the same
+   * scene are now genuinely different pictures, and a key that could not tell
+   * them apart would make the cache hand one of them the other's sprite.
+   */
+  readonly zone?: string;
 }
 
-export function spriteKey(kind: SpriteKind, variant: number): SpriteKey {
-  return { kind, variant };
+export function spriteKey(kind: SpriteKind, variant: number, zone?: string): SpriteKey {
+  return zone === undefined ? { kind, variant } : { kind, variant, zone };
 }
 
 /**
@@ -106,7 +120,7 @@ const PALETTE_SIZE = AGENT_COLORS.length;
  */
 function keyOf(key: SpriteKey): string {
   const index = ((key.variant % PALETTE_SIZE) + PALETTE_SIZE) % PALETTE_SIZE;
-  return `${key.kind}:${index}`;
+  return key.zone === undefined ? `${key.kind}:${index}` : `${key.kind}:${index}:${key.zone}`;
 }
 
 /** The dark line every placeholder is outlined in, so figures read on any tile. */
@@ -172,29 +186,110 @@ export interface SpriteCacheStats {
   readonly constructed: number;
   /** Lookups served. Grows forever; `constructed` must not. */
   readonly lookups: number;
+  /**
+   * Sprites served from the vendored art.
+   *
+   * The number that says whether the game is drawing its art or drawing
+   * rectangles. It is a stat rather than a claim because the alternative was a
+   * city full of grey squares and a comment saying the art was on disk.
+   */
+  readonly fromAssets: number;
 }
 
 /**
- * A cache that is a cache.
+ * A cache that is a cache, over real art when there is any.
  *
- * Keyed by kind and variant, because that is the whole identity of a
- * placeholder: two agents with variant 3 are the same picture, and rebuilding
- * it per agent is the cost this exists to remove.
+ * Keyed by kind and variant — and now by zone, because two zones in a scene draw
+ * different buildings and a key that could not tell them apart would serve one
+ * of them the other's sprite.
+ *
+ * ## Why the art is optional rather than required
+ *
+ * `assets` is attached after construction, because loading a sheet is async and
+ * this class is used synchronously from the view's constructor. Before the
+ * attach, every lookup draws a placeholder; after it, the same lookup returns
+ * the vendored sprite and the placeholders are not constructed at all. So a
+ * client that never loads art is exactly the client this file was written for,
+ * and a client that does gets the game's real pixels without a second cache,
+ * a second key space or a branch in the view.
  */
 export class SpriteCache {
   readonly #textures = new Map<string, Texture>();
+  #assets: SpriteAssets | undefined;
   #constructed = 0;
   #lookups = 0;
+  /** Sprites served from the vendored art rather than drawn. */
+  #served = 0;
+
+  /**
+   * Hands the cache the vendored art.
+   *
+   * Idempotent, and a second attach REPLACES the first rather than merging: a
+   * theme swap has to change what a key returns, and a cache that kept the old
+   * texture under the same key would serve one theme's buildings from the
+   * other's sheet.
+   */
+  attach(assets: SpriteAssets): void {
+    this.#assets = assets;
+    for (const id of [...this.#textures.keys()]) {
+      this.#textures.delete(id);
+    }
+  }
 
   get(key: SpriteKey): Texture {
     this.#lookups += 1;
     const id = keyOf(key);
     const existing = this.#textures.get(id);
     if (existing !== undefined) return existing;
-    const texture = drawSprite(key).toTexture();
-    this.#constructed += 1;
+
+    const real = this.#realTexture(key);
+    const texture = real ?? drawSprite(key).toTexture();
+    if (real === undefined) {
+      this.#constructed += 1;
+    } else {
+      this.#served += 1;
+    }
     this.#textures.set(id, texture);
     return texture;
+  }
+
+  /**
+   * The vendored texture for a key, or undefined when this build has none.
+   *
+   * A miss is a normal answer, not a failure: a zone with no building behind it,
+   * an empty hero list because the sheet 404s, and a cache nobody attached art
+   * to all land here, and each of them must still draw something.
+   */
+  #realTexture(key: SpriteKey): Texture | undefined {
+    const assets = this.#assets;
+    if (assets === undefined) return undefined;
+
+    switch (key.kind) {
+      case 'agent':
+      case 'subagent':
+        // The variant is ALREADY a stable hash of the agent id — `paletteIndexFor`
+        // in view.ts is what produces it, and it is documented as stable across
+        // reconnects for exactly this reason. So indexing the hero list with it
+        // gives each character a face that does not change when they come back,
+        // and two agents do not collide any more often than their colours do.
+        //
+        // The older version of this called `heroFor(heroes, String(variant))`,
+        // which hashed a number a second time to pick a face — a second opinion
+        // about who somebody is, held in a different file, for no gain.
+        if (assets.heroes.length === 0) return undefined;
+        return assets.heroes[((key.variant % assets.heroes.length) + assets.heroes.length) % assets.heroes.length]
+          ?.idle[0];
+      case 'zone-marker':
+        return key.zone === undefined
+          ? undefined
+          : buildingForZone(assets.buildings, key.zone as ZoneId);
+      case 'building':
+        return assets.buildings.values().next().value as Texture | undefined;
+      case 'terrain-tile':
+        return assets.terrain[key.variant % Math.max(1, assets.terrain.length)];
+      default:
+        return undefined;
+    }
   }
 
   has(key: SpriteKey): boolean {
@@ -206,7 +301,41 @@ export class SpriteCache {
       size: this.#textures.size,
       constructed: this.#constructed,
       lookups: this.#lookups,
+      fromAssets: this.#served,
     };
+  }
+
+  /**
+   * The animation frames a character should be playing, or undefined.
+   *
+   * The animation is chosen by the agent's STATE, not by a timer: an agent with
+   * a tool is working and plays `work`, one without is idle and breathes. That
+   * is the same state that picks a zone, so a character walks to the terminal
+   * and then works at it, rather than standing in one place doing one thing.
+   *
+   * The array is returned rather than a frame because the CALLER holds the
+   * clock: two holders of "the current frame" is how a character ends up on
+   * frame 3 of its idle and frame 7 of its work with nothing reconciling them.
+   */
+  animationFor(
+    agentId: string,
+    working: boolean,
+    walking = false,
+  ): readonly Texture[] | undefined {
+    const assets = this.#assets;
+    if (assets === undefined || assets.heroes.length === 0) return undefined;
+    let hash = 0;
+    for (const character of agentId) {
+      hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+    }
+    const size = assets.heroes.length;
+    const hero = assets.heroes[((hash % size) + size) % size];
+    if (hero === undefined) return undefined;
+    // Walking outranks working, matching the order in `PixiWorldView.animate`.
+    // A character crossing the map playing `work` slides through it, which is
+    // the one combination that reads as a rendering fault rather than a choice.
+    if (walking) return hero.walk;
+    return working ? hero.work : hero.idle;
   }
 
   /**
