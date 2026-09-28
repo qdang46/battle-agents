@@ -604,6 +604,10 @@ describe('lazy discovery', () => {
           defineAction({
             id: 'quest.claim',
             permissions: ['quest.claim'],
+            // The fixture had no description on its action while the capabilities
+            // beside it had one, so "the description survives" was untestable: the
+            // test could not tell a preserved field from an absent one.
+            description: 'claim a quest for this agent',
             run: async () => ({ claimed: true }),
           }),
         ],
@@ -635,6 +639,20 @@ describe('lazy discovery', () => {
     expect(detail.capabilities.map((each) => each.name)).toEqual(['quest.read', 'quest.write']);
     expect(detail.actions.map((each) => each.id)).toEqual(['quest.claim']);
     expect(detail.capabilities[0]?.description).toBe('read a quest');
+  });
+
+  it('carries each action description through describeDomain', () => {
+    // The drop this guards: describeDomain re-projected every action into
+    // {id, permissions} and threw the description away, so 'inspect' reported
+    // 'undescribed' for the whole game. Nineteen authored descriptions in guild
+    // and social alone, written for whoever is discovering the API, all lost —
+    // and the test beside this one asserted the id and the permissions, so it
+    // stayed green.
+    const { runtime } = catalog();
+    const detail = runtime.describeDomain('quest');
+    const action = detail.actions[0];
+    expect(action?.description).toBeDefined();
+    expect(typeof action?.description).toBe('string');
   });
 
   it('carries permissions with an action so a surface can authorize it', () => {

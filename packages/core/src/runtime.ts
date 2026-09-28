@@ -115,7 +115,20 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         registry
           .actionsIn(domain)
           .map((action) =>
-            Object.freeze({ id: action.id, permissions: Object.freeze([...action.permissions]) }),
+            Object.freeze({
+              // Spread, not a re-listing. This named `id` and `permissions` and
+              // dropped `description`, which the registry goes out of its way to
+              // carry — so every action description a feature author wrote was
+              // discarded on the way out, and `inspect` reported "undescribed"
+              // for the entire game. Nineteen of them, in guild and social
+              // alone, written to be read by whoever is discovering the API.
+              //
+              // The `permissions` clone stays explicit because it is a mutable
+              // array and the copy is meant to be frozen; spreading alone would
+              // leave the caller holding the registry's own array.
+              ...action,
+              permissions: Object.freeze([...action.permissions]),
+            }),
           ),
       ),
     }),

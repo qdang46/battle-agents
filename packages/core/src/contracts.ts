@@ -124,7 +124,12 @@ export interface ActionDef<I = unknown, O = unknown> {
    * without running it. An action without one is reported as undescribed
    * rather than given a description invented on the way out.
    */
-  readonly description?: string;
+  /**
+   * `| undefined` rather than a bare optional, because `exactOptionalPropertyTypes`
+   * is on: an explicit `description: undefined` is a different value from an
+   * absent key, and `defineAction` forwards the former.
+   */
+  readonly description?: string | undefined;
   run(input: I, context: RuntimeContext): Promise<O>;
 }
 

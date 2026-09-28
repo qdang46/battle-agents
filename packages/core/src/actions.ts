@@ -36,6 +36,15 @@ export const NAMESPACED_ID_PATTERN = ACTION_ID_PATTERN;
 export function defineAction<I, O>(definition: {
   readonly id: string;
   readonly permissions: readonly string[];
+  /**
+   * What this action does, in a sentence a caller can act on.
+   *
+   * It was missing here while `ActionDef` has it, so TypeScript REJECTED it at
+   * every call site and the descriptions feature authors wrote could not be
+   * written at all. The registry goes out of its way to carry the field; the one
+   * function every action is declared through threw it away at the door.
+   */
+  readonly description?: string | undefined;
   run(input: I, context: RuntimeContext): Promise<O>;
 }): ActionDef<I, O> {
   if (!ACTION_ID_PATTERN.test(definition.id)) {
