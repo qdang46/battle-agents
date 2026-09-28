@@ -80,7 +80,7 @@ async function seedPlatform(tx: SeedTransaction): Promise<void> {
     .values([SEED_CHALLENGER_AGENT, SEED_OPPONENT_AGENT])
     .onConflictDoUpdate({
       target: agents.id,
-      set: { userId: agents.userId, name: agents.name, harness: agents.harness },
+      set: { userId: SEED_CHALLENGER_AGENT.userId, name: SEED_CHALLENGER_AGENT.name, harness: SEED_CHALLENGER_AGENT.harness },
     });
 
   await tx
@@ -110,7 +110,7 @@ async function seedSessionFixtures(tx: SeedTransaction): Promise<void> {
     .values([SEED_CHALLENGER_SESSION, SEED_OPPONENT_SESSION])
     .onConflictDoUpdate({
       target: sessions.id,
-      set: { status: sessions.status, harnessSessionRef: sessions.harnessSessionRef },
+      set: { status: SEED_CHALLENGER_SESSION.status, harnessSessionRef: SEED_CHALLENGER_SESSION.harnessSessionRef },
     });
 
   await tx
@@ -118,7 +118,7 @@ async function seedSessionFixtures(tx: SeedTransaction): Promise<void> {
     .values([...SEED_AGENT_STATS])
     .onConflictDoUpdate({
       target: agentStats.agentId,
-      set: { skillsJson: agentStats.skillsJson },
+      set: { skillsJson: SEED_AGENT_STATS[0]?.skillsJson },
     });
 }
 
@@ -154,7 +154,18 @@ async function seedQuestAndBountyFixtures(tx: SeedTransaction): Promise<void> {
     .values([SEED_LEAD_FUNDING, SEED_MATCHING_FUNDING])
     .onConflictDoUpdate({
       target: bountyFunds.id,
-      set: { amountCents: bountyFunds.amountCents },
+      // The FIXTURE's value, not the column. `bountyFunds.amountCents` is a
+      // drizzle `Column`, and a `Column` is a legal value for `set` — so the
+      // statement compiled, ran, and rendered as
+      //
+      //     "amount_cents" = "bounty_funds"."amount_cents"
+      //
+      // which is a tautology. Re-seeding silently left every funding row at
+      // whatever it was, and `checkSeedIsIdempotent` could not see it because a
+      // no-op upsert leaves the row COUNT identical. The one column where being
+      // wrong is worth money, wrong in a way no gate in this repository could
+      // name.
+      set: { amountCents: SEED_LEAD_FUNDING.amountCents },
     });
 }
 
@@ -176,7 +187,18 @@ async function seedBattleFixtures(tx: SeedTransaction): Promise<void> {
     .values([...SEED_BATTLE_PARTICIPANTS])
     .onConflictDoUpdate({
       target: [battleParticipants.battleId, battleParticipants.sessionId],
-      set: { scoreJson: battleParticipants.scoreJson, won: battleParticipants.won },
+      // NOTHING is set here, which is a decision and not an omission.
+      //
+      // This upsert's conflict target is the PAIR (battleId, sessionId), and
+      // each participant has its OWN score — 0.92 and 0.81. A `set` clause
+      // applies one value to whichever row conflicted, so putting a fixture's
+      // score here gives BOTH fighters the same number and makes the second
+      // one's result a copy of the first. The `Column` reference that used to
+      // be here was a tautology that changed nothing, and that accident is
+      // exactly what the right answer looks like here: on a composite key with
+      // per-row values, the correct `set` is none, and the insert already
+      // supplied them.
+      set: {},
     });
 }
 

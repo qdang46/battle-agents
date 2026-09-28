@@ -3,6 +3,10 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import type { AgentWatcher } from '@battle-agents/core';
 import { EventBuffer, type AgentEvent } from '@battle-agents/protocol';
 
+/** A newline, as a byte — the cursor is measured in bytes and searches this. */
+
+/** A newline as a BYTE. The cursor is measured in bytes and searches for this. */
+const NEWLINE_BYTE = 0x0a;
 import { AMP_PROVIDER_ID, parseRecord, type RawThreadRef } from './parser.js';
 
 /**
@@ -139,19 +143,37 @@ export class AmpWatcher implements AgentWatcher {
     }
     if (size === this.#offset) return [];
 
-    const text = readFileSync(path, 'utf8').slice(this.#offset);
-    const lastBreak = text.lastIndexOf('\n');
+    // SLICE BYTES, THEN DECODE. The offset counts BYTES and must be applied
+    // before the bytes become a string, because a JavaScript string indexes
+    // CHARACTERS.
+    //
+    // The first version read the whole file as utf8 and sliced THAT by a byte
+    // offset. For ASCII the two are the same number and nothing looks wrong.
+    // The first non-ASCII character makes them differ — `🐛` is four bytes and
+    // one character — so the offset ran ahead by three per emoji, and every
+    // subsequent read started that many bytes late. The bytes in between are
+    // lost, not deferred: a JSON line cut in half fails to parse, is swallowed
+    // by the `catch` below, and the cursor has already moved past it. One
+    // emoji in one prompt cost every record after it, silently.
+    //
+    // `adapters/pi/src/parsers/session.ts` already does it this way, and
+    // `it('does not lose a record when a prompt contains an emoji')` exists
+    // because the difference is invisible until it is not.
+    const buffer = readFileSync(path);
+    const slice = buffer.subarray(this.#offset);
+    const lastBreak = slice.lastIndexOf(NEWLINE_BYTE);
     if (lastBreak === -1) return [];
 
-    const complete = text.slice(0, lastBreak);
-    this.#offset += Buffer.byteLength(complete, 'utf8') + 1;
+    const complete = slice.subarray(0, lastBreak);
+    this.#offset += complete.length + 1;
+    const text = complete.toString('utf8');
 
     const ref: RawThreadRef = {
       threadId: this.#options.threadId,
       providerId: AMP_PROVIDER_ID,
     };
     const events: AgentEvent[] = [];
-    for (const line of complete.split('\n')) {
+    for (const line of text.split('\n')) {
       if (line.trim() === '') continue;
       let parsed: unknown;
       try {

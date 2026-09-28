@@ -85,6 +85,30 @@ describe('the Amp watcher', () => {
     expect(sent.flat().length).toBe(afterFirst);
   });
 
+it('does not lose a record when an earlier one holds a multi-byte character', () => {
+    // THE REGRESSION THIS FILE EXISTS FOR.
+    //
+    // The cursor advanced by  — bytes — and was applied to a
+    // string read with utf8, which indexes CHARACTERS. For ASCII the two agree and
+    // every test above passes. A prompt containing  is four bytes and one
+    // character, so after it the cursor sat three bytes too far along, and the
+    // next read began inside a record.
+    //
+    // A record cut in half does not fail loudly: JSON.parse throws, the catch
+    // below it swallows, and the cursor has ALREADY moved past the line. The
+    // record is not deferred to the next tick — it is gone. One emoji in one
+    // prompt cost every tool call after it, and nothing reported it.
+    writeFileSync(path, line({ createdAt: AT, toolName: 'read_file', path: 'a/🐛/b.ts' }));
+    const w = watcher();
+    w.start();
+    const first = w.readNewRecords();
+    expect(first.map((event) => event.type)).toEqual(['tool.started']);
+
+    appendFileSync(path, line({ createdAt: AT, toolName: 'write_file' }));
+    const second = w.readNewRecords();
+    expect(second.map((event) => event.type)).toEqual(['tool.started']);
+  });
+
   it('leaves a half-written line for the next tick rather than dropping it', async () => {
     // A thread file is appended to, so a reader can land between two writes.
     // Parsing the partial line would drop the record; advancing the offset past
